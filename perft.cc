@@ -1140,4 +1140,5 @@ int main(int argc, char** argv)
 		printf("Castles:    %'llu\n", castles);
 		printf("Promotions: %'llu\n", promotions);
 	}
+	delete[] list;
 }

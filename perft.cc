@@ -741,11 +741,12 @@ template<int c>
 static void gen_pawn_moves(Position* pos, int** end)
 {
 	int to, cap_pt, fr;
-	u64 single_push, from, cap_candidates;
-	u64 const vacancy_mask = ~pos->bb[FULL];
-	u64       pawns_bb     = pos->bb[PAWN] & pos->bb[c];
-	u64 prom_candidates_bb = pawns_bb & rank_mask[(c == WHITE ? RANK_7 : RANK_2)];
-	pawns_bb              ^= prom_candidates_bb;
+	u64 single_push, from, cap_candidates, double_push;
+	u64 const vacancy_mask        = ~pos->bb[FULL];
+	u64       pawns_bb            = pos->bb[PAWN] & pos->bb[c];
+	u64 prom_candidates_bb        = pawns_bb & rank_mask[(c == WHITE ? RANK_7 : RANK_2)];
+	u64 double_push_candidates_bb = pawns_bb & rank_mask[(c == WHITE ? RANK_2 : RANK_7)];
+	pawns_bb                      ^= prom_candidates_bb ^ double_push_candidates_bb;
 	if (pos->state->ep_sq != -1) {
 		int const ep_sq   = pos->state->ep_sq;
 		u64       ep_poss = pawns_bb & p_atks_bb[!c][ep_sq];
@@ -777,24 +778,33 @@ static void gen_pawn_moves(Position* pos, int** end)
 			add_move(move_prom_cap(fr, to, TO_BISHOP, cap_pt), end);
 		}
 	}
+	while (double_push_candidates_bb) {
+		from                       = double_push_candidates_bb & -double_push_candidates_bb;
+		fr                         = bitscan(double_push_candidates_bb);
+		double_push_candidates_bb &= double_push_candidates_bb - 1;
+		single_push                = pawn_shift<c>(from);
+		cap_candidates             = p_atks_bb[c][fr] & pos->bb[!c];
+		if (single_push & vacancy_mask) {
+			add_move(move_normal(bitscan(from), bitscan(single_push)), end);
+			double_push = pawn_shift<c>(single_push);
+			if (double_push & vacancy_mask)
+				add_move(move_double_push(bitscan(from), bitscan(double_push)), end);
+		}
+		while (cap_candidates) {
+			to              = bitscan(cap_candidates);
+			cap_pt          = pos->board[to];
+			cap_candidates &= cap_candidates - 1;
+			add_move(move_cap(fr, to, cap_pt), end);
+		}
+	}
 	while (pawns_bb) {
 		from        = pawns_bb & -pawns_bb;
 		fr          = bitscan(pawns_bb);
 		pawns_bb   &= pawns_bb - 1;
 		single_push = pawn_shift<c>(from);
 		cap_candidates = p_atks_bb[c][fr] & pos->bb[!c];
-		if (single_push & vacancy_mask) {
+		if (single_push & vacancy_mask)
 			add_move(move_normal(bitscan(from), bitscan(single_push)), end);
-			if (c == WHITE && (from & rank_mask[RANK_2])) {
-				u64 const double_push = single_push << 8;
-				if (double_push & vacancy_mask)
-					add_move(move_double_push(bitscan(from), bitscan(double_push)), end);
-			} else if (c == BLACK && (from & rank_mask[RANK_7])) {
-				u64 const double_push = single_push >> 8;
-				if (double_push & vacancy_mask)
-					add_move(move_double_push(bitscan(from), bitscan(double_push)), end);
-			}
-		}
 		while (cap_candidates) {
 			to              = bitscan(cap_candidates);
 			cap_pt          = pos->board[to];

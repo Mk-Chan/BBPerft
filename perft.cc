@@ -26,6 +26,8 @@
 
 #define INITIAL_POSITION (("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"))
 
+#define MIN_HASH_DEPTH (2)
+
 #define BB(x)   ((1ULL << (x)))
 #define MAX_PLY (128)
 
@@ -1068,10 +1070,11 @@ u64 castles    = 0ULL;
 u64 promotions = 0ULL;
 Movelist** mlist;
 
-template<int c, bool use_hash, bool count_extras, bool split, bool root = true>
+template<int c, bool count_extras, bool split, bool use_hash, bool root = true>
 u64 perft(Position* pos, int depth, int thread_num = 0)
 {
-	if (use_hash) {
+	if (   use_hash
+	    && depth > MIN_HASH_DEPTH) {
 		struct TT entry = tt[pos->state->pos_key % tt_size];
 		if (  (entry.key ^ entry.count) == pos->state->pos_key
 		    && entry.depth == depth)
@@ -1132,7 +1135,8 @@ u64 perft(Position* pos, int depth, int thread_num = 0)
 			undo_move<c>(pos, *move);
 		}
 
-		if (use_hash)
+		if (   use_hash
+		    && depth > MIN_HASH_DEPTH)
 			tt[pos->state->pos_key % tt_size] = { leaves, pos->state->pos_key ^ leaves, depth };
 	}
 	return leaves;
@@ -1234,22 +1238,18 @@ int main(int argc, char** argv)
 		std::chrono::system_clock::now().time_since_epoch()
 	).count();
 	u64 leaves = stm == WHITE
-		? count_extras ? split ? use_hash ? perft<WHITE, true, true, true>(&pos, max_depth)
-						   : perft<WHITE, false, true, true>(&pos, max_depth)
-					: use_hash ? perft<WHITE, true, true, false>(&pos, max_depth)
-						   : perft<WHITE, false, true, false>(&pos, max_depth)
-			       : split ? use_hash ? perft<WHITE, true, false, true>(&pos, max_depth)
-						   : perft<WHITE, false, false, true>(&pos, max_depth)
-					: use_hash ? perft<WHITE, true, false, false>(&pos, max_depth)
-						   : perft<WHITE, false, false, false>(&pos, max_depth)
-		: count_extras ? split ? use_hash ? perft<BLACK, true, true, true>(&pos, max_depth)
-						   : perft<BLACK, false, true, true>(&pos, max_depth)
-					: use_hash ? perft<BLACK, true, true, false>(&pos, max_depth)
-						   : perft<BLACK, false, true, false>(&pos, max_depth)
-			       : split ? use_hash ? perft<BLACK, true, false, true>(&pos, max_depth)
-						   : perft<BLACK, false, false, true>(&pos, max_depth)
-					: use_hash ? perft<BLACK, true, false, false>(&pos, max_depth)
-						   : perft<BLACK, false, false, false>(&pos, max_depth);
+		? count_extras ? split ?            perft<WHITE, true,  true,  false>(&pos, max_depth)
+				       :            perft<WHITE, true,  false, false>(&pos, max_depth)
+			       : split ? use_hash ? perft<WHITE, false, true,  true >(&pos, max_depth)
+						  : perft<WHITE, false, true,  false>(&pos, max_depth)
+				       : use_hash ? perft<WHITE, false, false, true >(&pos, max_depth)
+						  : perft<WHITE, false, false, false>(&pos, max_depth)
+		: count_extras ? split ?            perft<BLACK, true,  true,  false>(&pos, max_depth)
+				       :            perft<BLACK, true,  false, false>(&pos, max_depth)
+			       : split ? use_hash ? perft<BLACK, false, true,  true >(&pos, max_depth)
+						  : perft<BLACK, false, true,  false>(&pos, max_depth)
+				       : use_hash ? perft<BLACK, false, false, true >(&pos, max_depth)
+						  : perft<BLACK, false, false, false>(&pos, max_depth);
 	t2 = std::chrono::duration_cast<std::chrono::milliseconds> (
 		std::chrono::system_clock::now().time_since_epoch()
 	).count();

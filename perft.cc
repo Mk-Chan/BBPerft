@@ -1197,9 +1197,6 @@ int main(int argc, char** argv)
 	    && count_extras) {
 		std::cout << "Cannot count extras while hashing or using multiple threads!" << std::endl;
 		return 1;
-	} else if (use_hash && split) {
-		std::cout << "Cannot perform split perft while hashing!" << std::endl;
-		return 1;
 	}
 
 	if (!(fen_set && depth_set)) {

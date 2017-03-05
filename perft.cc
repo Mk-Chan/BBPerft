@@ -1154,12 +1154,12 @@ int main(int argc, char** argv)
 	bool fen_set = false;
 	bool depth_set = false;
 	bool use_hash = false;
-	std::string fen;
-	int max_depth;
 	int max_threads = 1;
 	int hash_size = 0;
-
+	std::string fen;
+	int max_depth;
 	int c;
+
 	while ((c = getopt(argc, argv, "sed:f:t:h:")) != -1) {
 		switch (c) {
 		case 's':

@@ -1120,7 +1120,7 @@ u64 perft(Position* pos, int depth, int thread_num = 0)
 			Position p = get_pos_copy(pos);
 			if (!legal_move<c>(&p, *move)) continue;
 			do_move<c>(&p, *move);
-			u64 tmp = perft<!c, use_hash, count_extras, false, false>(&p, depth - 1, omp_get_thread_num());
+			u64 tmp = perft<!c, count_extras, split, use_hash, false>(&p, depth - 1, omp_get_thread_num());
 			leaves += tmp;
 			if (split) {
 				move_str(*move, mstr);
@@ -1131,7 +1131,7 @@ u64 perft(Position* pos, int depth, int thread_num = 0)
 		for (move = list->moves; move < list->end; ++move) {
 			if (!legal_move<c>(pos, *move)) continue;
 			do_move<c>(pos, *move);
-			leaves += perft<!c, use_hash, count_extras, false, false>(pos, depth - 1, thread_num);
+			leaves += perft<!c, count_extras, split, use_hash, false>(pos, depth - 1, thread_num);
 			undo_move<c>(pos, *move);
 		}
 

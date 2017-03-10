@@ -1137,7 +1137,7 @@ u64 perft(Position* pos, int depth, int thread_num = 0)
 
 		if (   use_hash
 		    && depth > MIN_HASH_DEPTH)
-			tt[pos->state->pos_key % tt_size] = { leaves, pos->state->pos_key ^ leaves, depth };
+			tt[pos->state->pos_key % tt_size] = { .count = leaves, .key = pos->state->pos_key ^ leaves, .depth = depth };
 	}
 	return leaves;
 }

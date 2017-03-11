@@ -670,11 +670,9 @@ static inline void add_move(int const m, int** end)
 
 static void extract_moves(int const from, u64 atks_bb, int** end)
 {
-	int to;
 	while (atks_bb) {
-		to       = bitscan(atks_bb);
+		add_move(move_normal(from, bitscan(atks_bb)), end);
 		atks_bb &= atks_bb - 1;
-		add_move(move_normal(from, to), end);
 	}
 }
 
@@ -736,7 +734,7 @@ static void gen_checker_caps(Position* pos, u64 checkers_bb, int** end)
 	int const ep_sq         = pos->state->ep_sq;
 	if (    ep_sq != -1
 	    && (pawn_shift<!c>(BB(ep_sq)) & checkers_bb)) {
-		u64 ep_poss     = pawns_bb & p_atks_bb[!c][ep_sq];
+		u64 ep_poss = pawns_bb & p_atks_bb[!c][ep_sq];
 		while (ep_poss) {
 			atker    = bitscan(ep_poss);
 			ep_poss &= ep_poss - 1;
@@ -777,7 +775,7 @@ static void gen_check_evasions(Position* pos, int** end)
 
 	int sq;
 	while (evasions_bb) {
-		sq = bitscan(evasions_bb);
+		sq           = bitscan(evasions_bb);
 		evasions_bb &= evasions_bb - 1;
 		if (!atkers_to_sq<!c>(pos, sq, sans_king_bb)) {
 			if (pos->board[sq])
@@ -814,9 +812,8 @@ static void gen_pawn_moves(Position* pos, int** end)
 		int const ep_sq   = pos->state->ep_sq;
 		u64       ep_poss = pawns_bb & p_atks_bb[!c][ep_sq];
 		while (ep_poss) {
-			fr       = bitscan(ep_poss);
+			add_move(move_ep(bitscan(ep_poss), ep_sq), end);
 			ep_poss &= ep_poss - 1;
-			add_move(move_ep(fr, ep_sq), end);
 		}
 	}
 	while (prom_candidates_bb) {
@@ -1137,7 +1134,11 @@ u64 perft(Position* pos, int depth, int thread_num = 0)
 
 		if (   use_hash
 		    && depth > MIN_HASH_DEPTH)
-			tt[pos->state->pos_key % tt_size] = { .count = leaves, .key = pos->state->pos_key ^ leaves, .depth = depth };
+			tt[pos->state->pos_key % tt_size] = {
+				.count = leaves,
+				.key   = pos->state->pos_key ^ leaves,
+				.depth = depth
+			};
 	}
 	return leaves;
 }
@@ -1157,7 +1158,7 @@ int main(int argc, char** argv)
 	int max_threads = 1;
 	int hash_size = 0;
 	std::string fen;
-	int max_depth;
+	int max_depth = 0;
 	int c;
 
 	while ((c = getopt(argc, argv, "sed:f:t:h:")) != -1) {

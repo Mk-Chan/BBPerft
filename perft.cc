@@ -25,8 +25,6 @@
 
 #define INITIAL_POSITION (("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"))
 
-#define MIN_HASH_DEPTH (2)
-
 #define BB(x)   ((1ULL << (x)))
 #define MAX_PLY (128)
 
@@ -225,18 +223,6 @@ static inline u64 get_atks(int const sq, u64 const occupancy)
 	}
 }
 
-static inline u64 get_atks(int const sq, u64 const occupancy, int pt)
-{
-	switch (pt) {
-	case KNIGHT: return n_atks_bb[sq];
-	case BISHOP: return Bmagic(sq, occupancy);
-	case ROOK:   return Rmagic(sq, occupancy);
-	case QUEEN:  return Qmagic(sq, occupancy);
-	case KING:   return k_atks_bb[sq];
-	default:     return -1;
-	}
-}
-
 template<int c>
 static inline u64 pawn_shift(u64 const bb)
 {
@@ -252,11 +238,6 @@ static inline u64 pawn_double_shift(u64 const bb)
 static inline int file_diff(int const sq1, int const sq2)
 {
 	return std::abs((sq1 % 8) - (sq2 % 8));
-}
-
-static inline u64 rng()
-{
-	return (0ULL ^ rand()) | ((0ULL ^ rand()) << 32);
 }
 
 void init_intervening_sqs()
@@ -397,7 +378,7 @@ void undo_move(Position* const pos, int const m)
 	}
 }
 
-template<int c, bool hash = false>
+template<int c>
 void do_move(Position* const pos, int const m)
 {
 	static int const castle_perms[64] = {

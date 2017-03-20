@@ -114,7 +114,7 @@ enum Ranks {
 #define rank_of(sq) (sq >> 3)
 #define file_of(sq) (sq & 7)
 
-#define to_sq(m)     ((m >> 6) & 0x3f)
+#define to_sq(m)     ((m & 0xfc0) >> 6)
 #define from_sq(m)   (m & 0x3f)
 #define cap_type(m)  ((m & CAP_TYPE_MASK) >> CAP_TYPE_SHIFT)
 #define move_type(m) (m & MOVE_TYPE_MASK)
@@ -180,7 +180,7 @@ struct State {
 };
 
 struct Position {
-	u64    bb[9];
+	u64    bb[16];
 	int    board[64];
 	State* state;
 	State  hist[MAX_PLY];
@@ -213,9 +213,9 @@ template<int c, bool update_key = false>
 static inline void put_piece(Position* const pos, int const sq, int const pt)
 {
 	u64 set         = BB(sq);
-	pos->bb[FULL]  |= set;
-	pos->bb[c]     |= set;
-	pos->bb[pt]    |= set;
+	pos->bb[FULL]  ^= set;
+	pos->bb[c]     ^= set;
+	pos->bb[pt]    ^= set;
 	pos->board[sq]  = pt;
 	if (update_key)
 		pos->state->pos_key ^= psq_keys[c][pt][sq];
@@ -282,7 +282,6 @@ static inline u64 rng()
 
 void init_zobrist_keys()
 {
-	srand(time(0));
 	int i, j, k;
 	for (i = 0; i != 2; ++i)
 		for (j = 0; j != 8; ++j)
@@ -431,7 +430,7 @@ void undo_move(Position* const pos, int const m)
 	}
 }
 
-template<int c>
+template<int c, bool hash = false>
 void do_move(Position* const pos, int const m)
 {
 	static int const castle_perms[64] = {
@@ -459,55 +458,55 @@ void do_move(Position* const pos, int const m)
 	else
 		next->pos_key = curr->pos_key;
 
-	next->castling_rights =  (curr->castling_rights & castle_perms[from]) & castle_perms[to];
-	next->pos_key        ^=   stm_key
-		                ^ castle_keys[curr->castling_rights]
-		                ^ castle_keys[next->castling_rights];
+	next->castling_rights = curr->castling_rights & castle_perms[from] & castle_perms[to];
+	next->pos_key ^=   stm_key
+		         ^ castle_keys[curr->castling_rights]
+		         ^ castle_keys[next->castling_rights];
 
 	switch (mt) {
 	case NORMAL:
-		move_piece<c, true>(pos, from, to, pos->board[from]);
+		move_piece<c, hash>(pos, from, to, pos->board[from]);
 		break;
 	case CAPTURE:
-		remove_piece<!c, true>(pos, to, cap_type(m));
-		move_piece<c, true>(pos, from, to, pos->board[from]);
+		remove_piece<!c, hash>(pos, to, cap_type(m));
+		move_piece<c, hash>(pos, from, to, pos->board[from]);
 		break;
 	case DOUBLE_PUSH:
-		move_piece<c, true>(pos, from, to, PAWN);
+		move_piece<c, hash>(pos, from, to, PAWN);
 		next->ep_sq = (c == WHITE ? from + 8 : from - 8);
-		next->pos_key ^= psq_keys[0][0][(c == WHITE ? from + 8 : from - 8)];
+		next->pos_key ^= psq_keys[0][0][next->ep_sq];
 		break;
 	case ENPASSANT:
-		move_piece<c, true>(pos, from, to, PAWN);
-		remove_piece<!c, true>(pos, (c == WHITE ? to - 8 : to + 8), PAWN);
+		move_piece<c, hash>(pos, from, to, PAWN);
+		remove_piece<!c, hash>(pos, (c == WHITE ? to - 8 : to + 8), PAWN);
 		break;
 	case CASTLE:
-		move_piece<c, true>(pos, from, to, KING);
+		move_piece<c, hash>(pos, from, to, KING);
 		switch (to) {
 		case C1:
-			move_piece<c, true>(pos, A1, D1, ROOK);
+			move_piece<c, hash>(pos, A1, D1, ROOK);
 			break;
 		case G1:
-			move_piece<c, true>(pos, H1, F1, ROOK);
+			move_piece<c, hash>(pos, H1, F1, ROOK);
 			break;
 		case C8:
-			move_piece<c, true>(pos, A8, D8, ROOK);
+			move_piece<c, hash>(pos, A8, D8, ROOK);
 			break;
 		case G8:
-			move_piece<c, true>(pos, H8, F8, ROOK);
+			move_piece<c, hash>(pos, H8, F8, ROOK);
 			break;
 		default:
 			break;
 		}
 		break;
 	case PROM_CAPTURE:
-		remove_piece<!c, true>(pos, to, cap_type(m));
-		remove_piece<c, true>(pos, from, PAWN);
-		put_piece<c, true>(pos, to, prom_type(m));
+		remove_piece<!c, hash>(pos, to, cap_type(m));
+		remove_piece<c, hash>(pos, from, PAWN);
+		put_piece<c, hash>(pos, to, prom_type(m));
 		break;
 	default:
-		remove_piece<c, true>(pos, from, PAWN);
-		put_piece<c, true>(pos, to, prom_type(m));
+		remove_piece<c, hash>(pos, from, PAWN);
+		put_piece<c, hash>(pos, to, prom_type(m));
 		break;
 	}
 }
@@ -588,7 +587,7 @@ void init_pos(Position* const pos)
 	pos->state->castling_rights = 0;
 	pos->state->ep_sq           = -1;
 	pos->state->checkers_bb     = 0ULL;
-	pos->state->pos_key = rng();
+	pos->state->pos_key         = rng();
 }
 
 int set_pos(Position* pos, std::string fen)
@@ -619,8 +618,8 @@ int set_pos(Position* pos, std::string fen)
 	}
 
 	++index;
-	stm = fen[index] == 'w' ? WHITE : BLACK;
-	index   += 2;
+	stm    = fen[index] == 'w' ? WHITE : BLACK;
+	index += 2;
 	while ((c = fen[index++]) != ' ') {
 		if (c == '-') {
 			++index;
@@ -916,12 +915,14 @@ static void gen_moves(Position* pos, int** end)
 	u64 const full_bb      = pos->bb[FULL],
 		  opp_mask     = pos->bb[!c],
 	          vacancy_mask = ~full_bb;
-	u64 curr_piece_bb = pos->bb[pt] & pos->bb[c];
+	u64 curr_piece_bb      = pos->bb[pt] & pos->bb[c];
+	if (pt == KNIGHT)
+		curr_piece_bb &= ~pos->state->pinned_bb;
 	while (curr_piece_bb) {
 		from           = bitscan(curr_piece_bb);
 		curr_piece_bb &= curr_piece_bb - 1;
-		extract_caps(pos->board, from, get_atks<pt>(from, full_bb) & opp_mask, end);
 		extract_moves(from, get_atks<pt>(from, full_bb) & vacancy_mask, end);
+		extract_caps(pos->board, from, get_atks<pt>(from, full_bb) & opp_mask, end);
 	}
 	gen_moves<pt+1, c>(pos, end);
 }
@@ -1073,8 +1074,8 @@ u64 perft(Position* pos, int depth, int thread_num = 0)
 	if (   use_hash
 	    && depth > MIN_HASH_DEPTH) {
 		struct TT entry = tt[pos->state->pos_key % tt_size];
-		if (  (entry.key ^ entry.count) == pos->state->pos_key
-		    && entry.depth == depth)
+		if (    entry.depth == depth
+		    && (entry.key ^ entry.count) == pos->state->pos_key)
 			return entry.count;
 	}
 	Movelist* list = mlist[thread_num] + (pos->state - pos->hist);
@@ -1111,25 +1112,28 @@ u64 perft(Position* pos, int depth, int thread_num = 0)
 			}
 		}
 	} else if (root) {
-		char mstr[6];
-#pragma omp parallel for reduction(+:leaves)
+		u64 tmp;
+#pragma omp parallel for reduction(+:leaves) private(tmp)
 		for (move = list->moves; move < list->end; ++move) {
 			Position p = get_pos_copy(pos);
-			if (!legal_move<c>(&p, *move)) continue;
-			do_move<c>(&p, *move);
-			u64 tmp = perft<!c, count_extras, split, use_hash, false>(&p, depth - 1, omp_get_thread_num());
-			leaves += tmp;
-			if (split) {
-				move_str(*move, mstr);
-				printf("%s: %'llu\n", mstr, tmp);
+			if (legal_move<c>(&p, *move)) {
+				do_move<c, use_hash>(&p, *move);
+				tmp = perft<!c, count_extras, split, use_hash, false>(&p, depth - 1, omp_get_thread_num());
+				leaves += tmp;
+				if (split) {
+					char mstr[6];
+					move_str(*move, mstr);
+					printf("%s: %'llu\n", mstr, tmp);
+				}
 			}
 		}
 	} else {
 		for (move = list->moves; move < list->end; ++move) {
-			if (!legal_move<c>(pos, *move)) continue;
-			do_move<c>(pos, *move);
-			leaves += perft<!c, count_extras, split, use_hash, false>(pos, depth - 1, thread_num);
-			undo_move<c>(pos, *move);
+			if (legal_move<c>(pos, *move)) {
+				do_move<c, use_hash>(pos, *move);
+				leaves += perft<!c, count_extras, split, use_hash, false>(pos, depth - 1, thread_num);
+				undo_move<c>(pos, *move);
+			}
 		}
 
 		if (   use_hash
@@ -1145,6 +1149,7 @@ u64 perft(Position* pos, int depth, int thread_num = 0)
 
 int main(int argc, char** argv)
 {
+	srand(time(0));
 	initmagicmoves();
 	init_atks();
 	init_intervening_sqs();
@@ -1159,9 +1164,10 @@ int main(int argc, char** argv)
 	int hash_size = 0;
 	std::string fen;
 	int max_depth = 0;
+	int repeat = 1;
 	int c;
 
-	while ((c = getopt(argc, argv, "sed:f:t:h:")) != -1) {
+	while ((c = getopt(argc, argv, "sed:f:t:h:r:")) != -1) {
 		switch (c) {
 		case 's':
 			split = true;
@@ -1190,6 +1196,9 @@ int main(int argc, char** argv)
 			use_hash = true;
 			hash_size = std::atoi(optarg);
 			break;
+		case 'r':
+			repeat = std::atoi(optarg);
+			break;
 		case '?':
 			std::cout << "Unknown option: " << optopt << "\n";
 			return 1;
@@ -1213,6 +1222,7 @@ int main(int argc, char** argv)
 			  << "-f \"<fen>\" => Perft the fen\n"
 			  << "-t <threads> => Number of threads\n"
 			  << "-h <hash-size> => Hash size in MB\n"
+			  << "-r <repeat-times> => Number of times to repeat\n"
 			  << "To perft the initial position you may also use ./perft -f startpos <flags>" << std::endl;
 		return 1;
 	}
@@ -1231,36 +1241,41 @@ int main(int argc, char** argv)
 	for (int i = 0; i < max_threads; ++i)
 		mlist[i] = new Movelist[max_depth];
 	long t1, t2;
-	captures   = 0ULL;
-	enpassants = 0ULL;
-	castles    = 0ULL;
-	promotions = 0ULL;
-	t1 = std::chrono::duration_cast<std::chrono::milliseconds> (
-		std::chrono::system_clock::now().time_since_epoch()
-	).count();
-	u64 leaves = stm == WHITE
-		? count_extras ? split ?            perft<WHITE, true,  true,  false>(&pos, max_depth)
-				       :            perft<WHITE, true,  false, false>(&pos, max_depth)
-			       : split ? use_hash ? perft<WHITE, false, true,  true >(&pos, max_depth)
-						  : perft<WHITE, false, true,  false>(&pos, max_depth)
-				       : use_hash ? perft<WHITE, false, false, true >(&pos, max_depth)
-						  : perft<WHITE, false, false, false>(&pos, max_depth)
-		: count_extras ? split ?            perft<BLACK, true,  true,  false>(&pos, max_depth)
-				       :            perft<BLACK, true,  false, false>(&pos, max_depth)
-			       : split ? use_hash ? perft<BLACK, false, true,  true >(&pos, max_depth)
-						  : perft<BLACK, false, true,  false>(&pos, max_depth)
-				       : use_hash ? perft<BLACK, false, false, true >(&pos, max_depth)
-						  : perft<BLACK, false, false, false>(&pos, max_depth);
-	t2 = std::chrono::duration_cast<std::chrono::milliseconds> (
-		std::chrono::system_clock::now().time_since_epoch()
-	).count();
-	printf("Perft(%2d): %'ld ms\n", max_depth, (t2 - t1));
-	printf("Leaves:     %'llu\n", leaves);
-	if (count_extras) {
-		printf("Captures:   %'llu\n", captures);
-		printf("Enpassants: %'llu\n", enpassants);
-		printf("Castles:    %'llu\n", castles);
-		printf("Promotions: %'llu\n", promotions);
+	while (repeat) {
+		--repeat;
+		captures   = 0ULL;
+		enpassants = 0ULL;
+		castles    = 0ULL;
+		promotions = 0ULL;
+		t1 = std::chrono::duration_cast<std::chrono::milliseconds> (
+			std::chrono::system_clock::now().time_since_epoch()
+		).count();
+		u64 leaves = stm == WHITE
+			? count_extras ? split ?            perft<WHITE, true,  true,  false>(&pos, max_depth)
+					       :            perft<WHITE, true,  false, false>(&pos, max_depth)
+				       : split ? use_hash ? perft<WHITE, false, true,  true >(&pos, max_depth)
+							  : perft<WHITE, false, true,  false>(&pos, max_depth)
+					       : use_hash ? perft<WHITE, false, false, true >(&pos, max_depth)
+							  : perft<WHITE, false, false, false>(&pos, max_depth)
+			: count_extras ? split ?            perft<BLACK, true,  true,  false>(&pos, max_depth)
+					       :            perft<BLACK, true,  false, false>(&pos, max_depth)
+				       : split ? use_hash ? perft<BLACK, false, true,  true >(&pos, max_depth)
+							  : perft<BLACK, false, true,  false>(&pos, max_depth)
+					       : use_hash ? perft<BLACK, false, false, true >(&pos, max_depth)
+							  : perft<BLACK, false, false, false>(&pos, max_depth);
+		t2 = std::chrono::duration_cast<std::chrono::milliseconds> (
+			std::chrono::system_clock::now().time_since_epoch()
+		).count();
+		if (use_hash)
+			memset(tt, 0, sizeof(struct TT) * tt_size);
+		printf("Perft(%2d): %'ld ms\n", max_depth, (t2 - t1));
+		printf("Leaves:     %'llu\n", leaves);
+		if (count_extras) {
+			printf("Captures:   %'llu\n", captures);
+			printf("Enpassants: %'llu\n", enpassants);
+			printf("Castles:    %'llu\n", castles);
+			printf("Promotions: %'llu\n", promotions);
+		}
 	}
 	for (int i = 0; i < max_threads; ++i)
 		delete[] mlist[i];

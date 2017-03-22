@@ -141,13 +141,13 @@ static u64 dirn_sqs_bb[64][64];
 
 static u64 rank_mask[8] = {
 	0xffULL,
-	0xffULL << 8,
-	0xffULL << 16,
-	0xffULL << 24,
-	0xffULL << 32,
-	0xffULL << 40,
-	0xffULL << 48,
-	0xffULL << 56
+	0xff00ULL,
+	0xff0000ULL,
+	0xff000000ULL,
+	0xff00000000ULL,
+	0xff0000000000ULL,
+	0xff000000000000ULL,
+	0xff00000000000000ULL
 };
 
 struct Movelist {
@@ -169,14 +169,17 @@ struct Position {
 	State  hist[MAX_PLY];
 };
 
-static Position get_pos_copy(Position const * const pos)
+static inline int get_pt(Position const * const pos, int const sq)
 {
-	Position copy_pos;
-	memcpy(copy_pos.bb, pos->bb, sizeof(pos->bb));
-	memcpy(copy_pos.board, pos->board, sizeof(pos->board));
-	copy_pos.state = &copy_pos.hist[pos->state - pos->hist];
-	memcpy(copy_pos.state, pos->state, sizeof(State));
-	return copy_pos;
+	return pos->board[sq];
+}
+
+static void get_pos_copy(Position* const copy_pos, Position const * const pos)
+{
+	memcpy(copy_pos->bb, pos->bb, sizeof(pos->bb));
+	memcpy(copy_pos->board, pos->board, sizeof(pos->board));
+	copy_pos->state = &copy_pos->hist[pos->state - pos->hist];
+	memcpy(copy_pos->state, pos->state, sizeof(State));
 }
 
 template<int c>
@@ -334,10 +337,10 @@ void undo_move(Position* const pos, int const m)
 
 	switch (mt) {
 	case NORMAL:
-		move_piece<c>(pos, to, from, pos->board[to]);
+		move_piece<c>(pos, to, from, get_pt(pos, to));
 		break;
 	case CAPTURE:
-		move_piece<c>(pos, to, from, pos->board[to]);
+		move_piece<c>(pos, to, from, get_pt(pos, to));
 		put_piece<!c>(pos, to, cap_type(m));
 		break;
 	case DOUBLE_PUSH:
@@ -405,11 +408,11 @@ void do_move(Position* const pos, int const m)
 
 	switch (mt) {
 	case NORMAL:
-		move_piece<c>(pos, from, to, pos->board[from]);
+		move_piece<c>(pos, from, to, get_pt(pos, from));
 		break;
 	case CAPTURE:
 		remove_piece<!c>(pos, to, cap_type(m));
-		move_piece<c>(pos, from, to, pos->board[from]);
+		move_piece<c>(pos, from, to, get_pt(pos, from));
 		break;
 	case DOUBLE_PUSH:
 		move_piece<c>(pos, from, to, PAWN);
@@ -611,13 +614,13 @@ static void extract_moves(int const from, u64 atks_bb, int** end)
 	}
 }
 
-static void extract_caps(int board[64], int const from, u64 atks_bb, int** end)
+static void extract_caps(Position const * const pos, int const from, u64 atks_bb, int** end)
 {
 	int to;
 	while (atks_bb) {
 		to       = bitscan(atks_bb);
 		atks_bb &= atks_bb - 1;
-		add_move(move_cap(from, to, board[to]), end);
+		add_move(move_cap(from, to, get_pt(pos, to)), end);
 	}
 }
 
@@ -678,7 +681,7 @@ static void gen_checker_caps(Position* pos, u64 checkers_bb, int** end)
 	}
 	while (checkers_bb) {
 		checker      = bitscan(checkers_bb);
-		checker_pt   = pos->board[checker];
+		checker_pt   = get_pt(pos, checker);
 		checkers_bb &= checkers_bb - 1;
 		atkers_bb    = atkers_to_sq<c>(pos, checker, full_bb) & non_king_mask;
 		while (atkers_bb) {
@@ -713,8 +716,8 @@ static void gen_check_evasions(Position* pos, int** end)
 		sq           = bitscan(evasions_bb);
 		evasions_bb &= evasions_bb - 1;
 		if (!atkers_to_sq<!c>(pos, sq, sans_king_bb)) {
-			if (pos->board[sq])
-				add_move(move_cap(ksq, sq, pos->board[sq]), end);
+			if (get_pt(pos, sq))
+				add_move(move_cap(ksq, sq, get_pt(pos, sq)), end);
 			else
 				add_move(move_normal(ksq, sq), end);
 		}
@@ -766,7 +769,7 @@ static void gen_pawn_moves(Position* pos, int** end)
 		while (cap_candidates) {
 			to              = bitscan(cap_candidates);
 			cap_candidates &= cap_candidates - 1;
-			cap_pt          = pos->board[to];
+			cap_pt          = get_pt(pos, to);
 			add_move(move_prom_cap(fr, to, TO_QUEEN, cap_pt), end);
 			add_move(move_prom_cap(fr, to, TO_KNIGHT, cap_pt), end);
 			add_move(move_prom_cap(fr, to, TO_ROOK, cap_pt), end);
@@ -787,7 +790,7 @@ static void gen_pawn_moves(Position* pos, int** end)
 		}
 		while (cap_candidates) {
 			to              = bitscan(cap_candidates);
-			cap_pt          = pos->board[to];
+			cap_pt          = get_pt(pos, to);
 			cap_candidates &= cap_candidates - 1;
 			add_move(move_cap(fr, to, cap_pt), end);
 		}
@@ -802,7 +805,7 @@ static void gen_pawn_moves(Position* pos, int** end)
 			add_move(move_normal(fr, bitscan(single_push)), end);
 		while (cap_candidates) {
 			to              = bitscan(cap_candidates);
-			cap_pt          = pos->board[to];
+			cap_pt          = get_pt(pos, to);
 			cap_candidates &= cap_candidates - 1;
 			add_move(move_cap(fr, to, cap_pt), end);
 		}
@@ -858,7 +861,7 @@ static void gen_moves(Position* pos, int** end)
 		from           = bitscan(curr_piece_bb);
 		curr_piece_bb &= curr_piece_bb - 1;
 		extract_moves(from, get_atks<pt>(from, full_bb) & vacancy_mask, end);
-		extract_caps(pos->board, from, get_atks<pt>(from, full_bb) & opp_mask, end);
+		extract_caps(pos, from, get_atks<pt>(from, full_bb) & opp_mask, end);
 	}
 	gen_moves<pt+1, c>(pos, end);
 }
@@ -882,7 +885,7 @@ inline void gen_moves<KING, WHITE>(Position* pos, int** end)
 {
 	int const from = bitscan(pos->bb[KING] & pos->bb[WHITE]);
 	extract_moves(from, k_atks_bb[from] & ~pos->bb[FULL], end);
-	extract_caps(pos->board, from, k_atks_bb[from] & pos->bb[BLACK], end);
+	extract_caps(pos, from, k_atks_bb[from] & pos->bb[BLACK], end);
 	gen_castling<WHITE>(pos, end);
 }
 
@@ -891,7 +894,7 @@ inline void gen_moves<KING, BLACK>(Position* pos, int** end)
 {
 	int const from = bitscan(pos->bb[KING] & pos->bb[BLACK]);
 	extract_moves(from, k_atks_bb[from] & ~pos->bb[FULL], end);
-	extract_caps(pos->board, from, k_atks_bb[from] & pos->bb[WHITE], end);
+	extract_caps(pos, from, k_atks_bb[from] & pos->bb[WHITE], end);
 	gen_castling<BLACK>(pos, end);
 }
 
@@ -1019,6 +1022,8 @@ u64 perft(Position* pos, Movelist* list, int depth)
 	if (depth == 1) {
 		for (move = list->moves; move < list->end; ++move) {
 			if (!legal_move<c>(pos, *move)) continue;
+			//do_move<c>(pos, *move);
+			//undo_move<c>(pos, *move);
 			++leaves;
 			if (count_extras) {
 				captures += !!cap_type(*move);
@@ -1040,8 +1045,9 @@ u64 perft(Position* pos, Movelist* list, int depth)
 		}
 	} else if (root) {
 		u64 tmp;
+		Position p;
 		for (move = list->moves; move < list->end; ++move) {
-			Position p = get_pos_copy(pos);
+			get_pos_copy(&p, pos);
 			if (legal_move<c>(&p, *move)) {
 				do_move<c>(&p, *move);
 				tmp = perft<!c, count_extras, split, false>(&p, list + 1, depth - 1);

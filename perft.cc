@@ -958,10 +958,10 @@ static inline void move_str(int move, char str[6])
 {
 	int from = from_sq(move),
 	    to   = to_sq(move);
-	str[0]    = file_of(from) + 'a';
-	str[1]    = rank_of(from) + '1';
-	str[2]    = file_of(to)   + 'a';
-	str[3]    = rank_of(to)   + '1';
+	str[0]   = file_of(from) + 'a';
+	str[1]   = rank_of(from) + '1';
+	str[2]   = file_of(to)   + 'a';
+	str[3]   = rank_of(to)   + '1';
 	if (move_type(move) == PROMOTION) {
 		const int prom = prom_type(move);
 		switch (prom) {

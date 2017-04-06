@@ -1159,13 +1159,16 @@ int main(int argc, char** argv)
 		t2 = std::chrono::duration_cast<std::chrono::milliseconds> (
 			std::chrono::system_clock::now().time_since_epoch()
 		).count();
-		printf("Perft(%2d): %'ld ms\n", max_depth, (t2 - t1));
-		printf("Leaves:     %'llu\n", leaves);
+		long time_taken = t2 - t1;
+		printf("Perft(%2d) : %ld ms\n", max_depth, time_taken);
+		printf("Leaves    : %llu\n", leaves);
 		if (count_extras) {
-			printf("Captures:   %'llu\n", captures);
-			printf("Enpassants: %'llu\n", enpassants);
-			printf("Castles:    %'llu\n", castles);
-			printf("Promotions: %'llu\n", promotions);
+			printf("Captures  : %llu\n", captures);
+			printf("Enpassants: %llu\n", enpassants);
+			printf("Castles   : %llu\n", castles);
+			printf("Promotions: %llu\n", promotions);
 		}
+		if (time_taken)
+			printf("NPS       : %llu\n", (leaves * 1000) / time_taken);
 	}
 }

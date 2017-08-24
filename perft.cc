@@ -850,53 +850,34 @@ static inline void gen_castling(Position* pos, int** end)
 template<int pt, int c>
 static void gen_moves(Position* pos, int** end)
 {
-	int from;
-	u64 const full_bb      = pos->bb[FULL],
-		  opp_mask     = pos->bb[!c],
-	          vacancy_mask = ~full_bb;
-	u64 curr_piece_bb      = pos->bb[pt] & pos->bb[c];
-	if (pt == KNIGHT)
-		curr_piece_bb &= ~pos->state->pinned_bb;
-	while (curr_piece_bb) {
-		from           = bitscan(curr_piece_bb);
-		curr_piece_bb &= curr_piece_bb - 1;
-		extract_moves(from, get_atks<pt>(from, full_bb) & vacancy_mask, end);
-		extract_caps(pos, from, get_atks<pt>(from, full_bb) & opp_mask, end);
+	if (pt == PAWN) {
+		gen_pawn_moves<c>(pos, end);
+		gen_moves<KNIGHT, c>(pos, end);
+	} else if (pt == KING) {
+		int const from = bitscan(pos->bb[KING] & pos->bb[c]);
+		extract_moves(from, k_atks_bb[from] & ~pos->bb[FULL], end);
+		extract_caps(pos, from, k_atks_bb[from] & pos->bb[!c], end);
+		gen_castling<c>(pos, end);
+	} else {
+		int from;
+		u64 const full_bb      = pos->bb[FULL],
+			  opp_mask     = pos->bb[!c],
+			  vacancy_mask = ~full_bb;
+		u64 curr_piece_bb      = pos->bb[pt] & pos->bb[c];
+		if (pt == KNIGHT)
+			curr_piece_bb &= ~pos->state->pinned_bb;
+		while (curr_piece_bb) {
+			from           = bitscan(curr_piece_bb);
+			curr_piece_bb &= curr_piece_bb - 1;
+			extract_moves(from, get_atks<pt>(from, full_bb) & vacancy_mask, end);
+			extract_caps(pos, from, get_atks<pt>(from, full_bb) & opp_mask, end);
+		}
+		gen_moves<pt+1, c>(pos, end);
 	}
-	gen_moves<pt+1, c>(pos, end);
 }
 
-template<>
-inline void gen_moves<PAWN, WHITE>(Position* pos, int** end)
-{
-	gen_pawn_moves<WHITE>(pos, end);
-	gen_moves<KNIGHT, WHITE>(pos, end);
-}
-
-template<>
-inline void gen_moves<PAWN, BLACK>(Position* pos, int** end)
-{
-	gen_pawn_moves<BLACK>(pos, end);
-	gen_moves<KNIGHT, BLACK>(pos, end);
-}
-
-template<>
-inline void gen_moves<KING, WHITE>(Position* pos, int** end)
-{
-	int const from = bitscan(pos->bb[KING] & pos->bb[WHITE]);
-	extract_moves(from, k_atks_bb[from] & ~pos->bb[FULL], end);
-	extract_caps(pos, from, k_atks_bb[from] & pos->bb[BLACK], end);
-	gen_castling<WHITE>(pos, end);
-}
-
-template<>
-inline void gen_moves<KING, BLACK>(Position* pos, int** end)
-{
-	int const from = bitscan(pos->bb[KING] & pos->bb[BLACK]);
-	extract_moves(from, k_atks_bb[from] & ~pos->bb[FULL], end);
-	extract_caps(pos, from, k_atks_bb[from] & pos->bb[WHITE], end);
-	gen_castling<BLACK>(pos, end);
-}
+template<> void gen_moves<KING+1, WHITE>(Position*, int**) {}
+template<> void gen_moves<KING+1, BLACK>(Position*, int**) {}
 
 template<int to_color>
 static inline u64 get_pinned(Position* const pos)

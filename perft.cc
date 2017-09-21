@@ -163,11 +163,13 @@ struct State {
 };
 
 struct Position {
-	u64    bb[16];
+	u64    bb[12];
 	int    board[64];
 	State* state;
 	State  hist[MAX_PLY];
 };
+
+#define get_full_bb(bb) ((bb[FULL]))
 
 static inline int get_pt(Position const * const pos, int const sq)
 {
@@ -631,7 +633,7 @@ static void gen_check_blocks(Position* const pos, u64 blocking_poss_bb, int** en
 	int blocking_sq, blocker;
 	u64       pawns_bb       = pos->bb[PAWN] & pos->bb[c];
 	u64 const inlcusion_mask = ~(pawns_bb | pos->bb[KING] | pos->state->pinned_bb),
-	          full_bb        = pos->bb[FULL],
+	          full_bb        = get_full_bb(pos->bb),
 	          vacancy_mask   = ~full_bb;
 	while (blocking_poss_bb) {
 		blocking_sq         = bitscan(blocking_poss_bb);
@@ -668,7 +670,7 @@ static void gen_checker_caps(Position* pos, u64 checkers_bb, int** end)
 	int checker, atker, checker_pt;
 	u64 const pawns_bb      = pos->bb[PAWN] & pos->bb[c],
 	          non_king_mask = ~pos->bb[KING],
-		  full_bb       = pos->bb[FULL];
+		  full_bb       = get_full_bb(pos->bb);
 	int const ep_sq         = pos->state->ep_sq;
 	if (    ep_sq != -1
 	    && (pawn_shift<!c>(BB(ep_sq)) & checkers_bb)) {
@@ -708,7 +710,7 @@ static void gen_check_evasions(Position* pos, int** end)
 	u64 checkers_bb = pos->state->checkers_bb,
 	    evasions_bb = k_atks_bb[ksq] & ~pos->bb[c];
 
-	u64 const full_bb      = pos->bb[FULL];
+	u64 const full_bb      = get_full_bb(pos->bb);
 	u64 const sans_king_bb = full_bb ^ BB(ksq);
 
 	int sq;
@@ -741,7 +743,7 @@ static void gen_pawn_moves(Position* pos, int** end)
 {
 	int to, cap_pt, fr;
 	u64 single_push, from, cap_candidates, double_push;
-	u64 const vacancy_mask        = ~pos->bb[FULL];
+	u64 const vacancy_mask        = ~get_full_bb(pos->bb);
 	u64       pawns_bb            = pos->bb[PAWN] & pos->bb[c];
 	u64 prom_candidates_bb        = pawns_bb & rank_mask[(c == WHITE ? RANK_7 : RANK_2)];
 	u64 double_push_candidates_bb = pawns_bb & rank_mask[(c == WHITE ? RANK_2 : RANK_7)];
@@ -832,16 +834,16 @@ static inline void gen_castling(Position* pos, int** end)
 		{ (BB(F8) | BB(G8)), (BB(D8) | BB(C8) | BB(B8)) }
 	};
 
-	u64 const full_bb = pos->bb[FULL];
+	u64 const full_bb = get_full_bb(pos->bb);
 
 	if (    (castling_poss[c][0] & pos->state->castling_rights)
-	    && !(castle_mask[c][0] & pos->bb[FULL])
+	    && !(castle_mask[c][0] & full_bb)
 	    && !(atkers_to_sq<!c>(pos, castling_intermediate_sqs[c][0][0], full_bb))
 	    && !(atkers_to_sq<!c>(pos, castling_intermediate_sqs[c][0][1], full_bb)))
 		add_move(move_castle(castling_king_sqs[c][0][0], castling_king_sqs[c][0][1]), end);
 
 	if (    (castling_poss[c][1] & pos->state->castling_rights)
-	    && !(castle_mask[c][1] & pos->bb[FULL])
+	    && !(castle_mask[c][1] & full_bb)
 	    && !(atkers_to_sq<!c>(pos, castling_intermediate_sqs[c][1][0], full_bb))
 	    && !(atkers_to_sq<!c>(pos, castling_intermediate_sqs[c][1][1], full_bb)))
 		add_move(move_castle(castling_king_sqs[c][1][0], castling_king_sqs[c][1][1]), end);
@@ -855,12 +857,12 @@ static void gen_moves(Position* pos, int** end)
 		gen_moves<KNIGHT, c>(pos, end);
 	} else if (pt == KING) {
 		int const from = bitscan(pos->bb[KING] & pos->bb[c]);
-		extract_moves(from, k_atks_bb[from] & ~pos->bb[FULL], end);
+		extract_moves(from, k_atks_bb[from] & ~get_full_bb(pos->bb), end);
 		extract_caps(pos, from, k_atks_bb[from] & pos->bb[!c], end);
 		gen_castling<c>(pos, end);
 	} else {
 		int from;
-		u64 const full_bb      = pos->bb[FULL],
+		u64 const full_bb      = get_full_bb(pos->bb),
 			  opp_mask     = pos->bb[!c],
 			  vacancy_mask = ~full_bb;
 		u64 curr_piece_bb      = pos->bb[pt] & pos->bb[c];
@@ -895,7 +897,7 @@ static inline u64 get_pinned(Position* const pos)
 	while (pinners_bb) {
 		sq          = bitscan(pinners_bb);
 		pinners_bb &= pinners_bb - 1;
-		bb          = intervening_sqs_bb[sq][ksq] & pos->bb[FULL];
+		bb          = intervening_sqs_bb[sq][ksq] & get_full_bb(pos->bb);
 		if(!(bb & (bb - 1)))
 			pinned_bb ^= bb & pos->bb[to_color];
 	}
@@ -908,8 +910,8 @@ static inline u64 get_checkers(Position const * const pos)
 	const int sq = bitscan(pos->bb[KING] & pos->bb[!by_color]);
 	return (  ( pos->bb[KNIGHT]                   & n_atks_bb[sq])
 		| ( pos->bb[PAWN]                     & p_atks_bb[!by_color][sq])
-		| ((pos->bb[ROOK]   | pos->bb[QUEEN]) & Rmagic(sq, pos->bb[FULL]))
-		| ((pos->bb[BISHOP] | pos->bb[QUEEN]) & Bmagic(sq, pos->bb[FULL]))
+		| ((pos->bb[ROOK]   | pos->bb[QUEEN]) & Rmagic(sq, get_full_bb(pos->bb)))
+		| ((pos->bb[BISHOP] | pos->bb[QUEEN]) & Bmagic(sq, get_full_bb(pos->bb)))
 		| ( pos->bb[KING]                     & k_atks_bb[sq]))
 		& pos->bb[by_color];
 }
@@ -922,13 +924,13 @@ static inline int legal_move(Position* const pos, int move)
 	int const ksq  = bitscan(pos->bb[KING] & pos->bb[c]);
 	if (move_type(move) == ENPASSANT) {
 		u64 const to_bb  = BB(pos->state->ep_sq);
-		u64 const pieces = (pos->bb[FULL] ^ BB(from) ^ pawn_shift<!c>(to_bb)) | to_bb;
+		u64 const pieces = (get_full_bb(pos->bb) ^ BB(from) ^ pawn_shift<!c>(to_bb)) | to_bb;
 
 		return !(Rmagic(ksq, pieces) & ((pos->bb[QUEEN] | pos->bb[ROOK]) & pos->bb[!c]))
 		    && !(Bmagic(ksq, pieces) & ((pos->bb[QUEEN] | pos->bb[BISHOP]) & pos->bb[!c]));
 	} else if (from == ksq) {
 		return move_type(move) == CASTLE
-		   || !atkers_to_sq<!c>(pos, to_sq(move), pos->bb[FULL]);
+		   || !atkers_to_sq<!c>(pos, to_sq(move), get_full_bb(pos->bb));
 	} else {
 		return !(pos->state->pinned_bb & BB(from))
 		     || (BB(to_sq(move)) & dirn_sqs_bb[from][ksq]);

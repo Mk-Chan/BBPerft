@@ -72,7 +72,8 @@ enum PieceTypes {
 	ROOK,
 	QUEEN,
 	KING,
-	FULL
+	FULL,
+	NUM_PIECE_TYPES
 };
 
 enum PieceWithColors {
@@ -636,7 +637,7 @@ void init_pos(Position* const pos)
 	int i;
 	for (i = 0; i != 64; ++i)
 		pos->board[i] = 0;
-	for (i = 0; i != 9; ++i)
+	for (i = 0; i != NUM_PIECE_TYPES; ++i)
 		pos->bb[i] = 0ULL;
 	pos->state                  = pos->hist;
 	pos->state->pinned_bb       = 0ULL;
@@ -971,7 +972,7 @@ void print_board(Position* pos)
 	for (i = 0; i != 64; ++i) {
 		if (i && !(i & 7))
 			printf("\n");
-		piece = pos->board[i ^ 56];
+		piece = get_pt(pos, i ^ 56);
 		if (!piece)
 			printf("- ");
 		else

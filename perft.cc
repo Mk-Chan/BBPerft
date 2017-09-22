@@ -36,6 +36,28 @@
 #define PROM_TYPE_MASK (7 << PROM_TYPE_SHIFT)
 #define CAP_TYPE_MASK  (7 << CAP_TYPE_SHIFT)
 
+#define get_full_bb(bb) ((bb[FULL]))
+
+#define rank_of(sq) (sq >> 3)
+#define file_of(sq) (sq & 7)
+
+#define to_sq(m)     ((m & 0xfc0) >> 6)
+#define from_sq(m)   (m & 0x3f)
+#define cap_type(m)  ((m & CAP_TYPE_MASK) >> CAP_TYPE_SHIFT)
+#define move_type(m) (m & MOVE_TYPE_MASK)
+#define prom_type(m) ((m & PROM_TYPE_MASK) >> PROM_TYPE_SHIFT)
+
+#define popcnt(bb)  (__builtin_popcountll(bb))
+#define bitscan(bb) (__builtin_ctzll(bb))
+
+#define move_ep(from, to)                  (from | (to << 6) | ENPASSANT)
+#define move_cap(from, to, cap)            (from | (to << 6) | CAPTURE | (cap << CAP_TYPE_SHIFT))
+#define move_prom(from, to, prom)          (from | (to << 6) | PROMOTION | prom)
+#define move_normal(from, to)              (from | (to << 6) | NORMAL)
+#define move_castle(from, to)              (from | (to << 6) | CASTLE)
+#define move_double_push(from, to)         (from | (to << 6) | DOUBLE_PUSH)
+#define move_prom_cap(from, to, prom, cap) (from | (to << 6) | PROM_CAPTURE | prom | (cap << CAP_TYPE_SHIFT))
+
 typedef unsigned long long u64;
 
 enum Colors {
@@ -108,25 +130,16 @@ enum Ranks {
 	RANK_8
 };
 
-#define rank_of(sq) (sq >> 3)
-#define file_of(sq) (sq & 7)
-
-#define to_sq(m)     ((m & 0xfc0) >> 6)
-#define from_sq(m)   (m & 0x3f)
-#define cap_type(m)  ((m & CAP_TYPE_MASK) >> CAP_TYPE_SHIFT)
-#define move_type(m) (m & MOVE_TYPE_MASK)
-#define prom_type(m) ((m & PROM_TYPE_MASK) >> PROM_TYPE_SHIFT)
-
-#define popcnt(bb)  (__builtin_popcountll(bb))
-#define bitscan(bb) (__builtin_ctzll(bb))
-
-#define move_ep(from, to)                  (from | (to << 6) | ENPASSANT)
-#define move_cap(from, to, cap)            (from | (to << 6) | CAPTURE | (cap << CAP_TYPE_SHIFT))
-#define move_prom(from, to, prom)          (from | (to << 6) | PROMOTION | prom)
-#define move_normal(from, to)              (from | (to << 6) | NORMAL)
-#define move_castle(from, to)              (from | (to << 6) | CASTLE)
-#define move_double_push(from, to)         (from | (to << 6) | DOUBLE_PUSH)
-#define move_prom_cap(from, to, prom, cap) (from | (to << 6) | PROM_CAPTURE | prom | (cap << CAP_TYPE_SHIFT))
+static int const is_prom_sq[64] = {
+	1, 1, 1, 1, 1, 1, 1, 1,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	1, 1, 1, 1, 1, 1, 1, 1
+};
 
 static int stm;
 
@@ -169,19 +182,9 @@ struct Position {
 	State  hist[MAX_PLY];
 };
 
-#define get_full_bb(bb) ((bb[FULL]))
-
 static inline int get_pt(Position const * const pos, int const sq)
 {
 	return pos->board[sq];
-}
-
-static void get_pos_copy(Position* const copy_pos, Position const * const pos)
-{
-	memcpy(copy_pos->bb, pos->bb, sizeof(pos->bb));
-	memcpy(copy_pos->board, pos->board, sizeof(pos->board));
-	copy_pos->state = &copy_pos->hist[pos->state - pos->hist];
-	memcpy(copy_pos->state, pos->state, sizeof(State));
 }
 
 template<int c>
@@ -245,6 +248,180 @@ static inline int file_diff(int const sq1, int const sq2)
 	return std::abs((sq1 % 8) - (sq2 % 8));
 }
 
+static inline int get_piece_from_char(char c)
+{
+	switch (c) {
+	case 'p': return BP;
+	case 'r': return BR;
+	case 'n': return BN;
+	case 'b': return BB;
+	case 'q': return BQ;
+	case 'k': return BK;
+	case 'P': return WP;
+	case 'R': return WR;
+	case 'N': return WN;
+	case 'B': return WB;
+	case 'Q': return WQ;
+	case 'K': return WK;
+	default : return -1;
+	}
+}
+
+static inline int get_cr_from_char(char c)
+{
+	switch (c) {
+	case 'K': return WKC;
+	case 'Q': return WQC;
+	case 'k': return BKC;
+	case 'q': return BQC;
+	default : return -1;
+	}
+}
+
+static inline char get_char_from_piece(int const piece, int c)
+{
+	char x;
+	int const pt = piece;
+	switch (pt) {
+	case PAWN:
+		x = 'P';
+		break;
+	case KNIGHT:
+		x = 'N';
+		break;
+	case BISHOP:
+		x = 'B';
+		break;
+	case ROOK:
+		x = 'R';
+		break;
+	case QUEEN:
+		x = 'Q';
+		break;
+	case KING:
+		x = 'K';
+		break;
+	default:
+		return -1;
+	}
+
+	if (c == BLACK)
+		x += 32;
+	return x;
+}
+
+template<int by_color>
+static inline u64 atkers_to_sq(Position const * const pos, int const sq, u64 const occupancy)
+{
+	return (  ( pos->bb[KNIGHT]                   & n_atks_bb[sq])
+		| ( pos->bb[PAWN]                     & p_atks_bb[!by_color][sq])
+		| ((pos->bb[ROOK]   | pos->bb[QUEEN]) & Rmagic(sq, occupancy))
+		| ((pos->bb[BISHOP] | pos->bb[QUEEN]) & Bmagic(sq, occupancy))
+		| ( pos->bb[KING]                     & k_atks_bb[sq]))
+		& pos->bb[by_color];
+}
+
+static inline void add_move(int const m, int** end)
+{
+	**end = m;
+	++*end;
+}
+
+template<int to_color>
+static inline u64 get_pinned(Position* const pos)
+{
+	int const ksq = bitscan(pos->bb[KING] & pos->bb[to_color]);
+	int sq;
+	u64 bb;
+	u64 pinned_bb  = 0ULL;
+	u64 pinners_bb = ( (pos->bb[ROOK] | pos->bb[QUEEN])
+			  & pos->bb[!to_color]
+			  & r_pseudo_atks_bb[ksq])
+		    | ( (pos->bb[BISHOP] | pos->bb[QUEEN])
+		       & pos->bb[!to_color]
+		       & b_pseudo_atks_bb[ksq]);
+	while (pinners_bb) {
+		sq          = bitscan(pinners_bb);
+		pinners_bb &= pinners_bb - 1;
+		bb          = intervening_sqs_bb[sq][ksq] & get_full_bb(pos->bb);
+		if(!(bb & (bb - 1)))
+			pinned_bb ^= bb & pos->bb[to_color];
+	}
+	return pinned_bb;
+}
+
+template<int by_color>
+static inline u64 get_checkers(Position const * const pos)
+{
+	const int sq = bitscan(pos->bb[KING] & pos->bb[!by_color]);
+	return (  ( pos->bb[KNIGHT]                   & n_atks_bb[sq])
+		| ( pos->bb[PAWN]                     & p_atks_bb[!by_color][sq])
+		| ((pos->bb[ROOK]   | pos->bb[QUEEN]) & Rmagic(sq, get_full_bb(pos->bb)))
+		| ((pos->bb[BISHOP] | pos->bb[QUEEN]) & Bmagic(sq, get_full_bb(pos->bb)))
+		| ( pos->bb[KING]                     & k_atks_bb[sq]))
+		& pos->bb[by_color];
+}
+
+// Idea from Stockfish 6
+template<int c>
+static inline int legal_move(Position* const pos, int move)
+{
+	int const from = from_sq(move);
+	int const ksq  = bitscan(pos->bb[KING] & pos->bb[c]);
+	if (move_type(move) == ENPASSANT) {
+		u64 const to_bb  = BB(pos->state->ep_sq);
+		u64 const pieces = (get_full_bb(pos->bb) ^ BB(from) ^ pawn_shift<!c>(to_bb)) | to_bb;
+
+		return !(Rmagic(ksq, pieces) & ((pos->bb[QUEEN] | pos->bb[ROOK]) & pos->bb[!c]))
+		    && !(Bmagic(ksq, pieces) & ((pos->bb[QUEEN] | pos->bb[BISHOP]) & pos->bb[!c]));
+	} else if (from == ksq) {
+		return move_type(move) == CASTLE
+		   || !atkers_to_sq<!c>(pos, to_sq(move), get_full_bb(pos->bb));
+	} else {
+		return !(pos->state->pinned_bb & BB(from))
+		     || (BB(to_sq(move)) & dirn_sqs_bb[from][ksq]);
+	}
+}
+
+static inline void move_str(int move, char str[6])
+{
+	int from = from_sq(move),
+	    to   = to_sq(move);
+	str[0]   = file_of(from) + 'a';
+	str[1]   = rank_of(from) + '1';
+	str[2]   = file_of(to)   + 'a';
+	str[3]   = rank_of(to)   + '1';
+	if (move_type(move) == PROMOTION) {
+		const int prom = prom_type(move);
+		switch (prom) {
+		case QUEEN:
+			str[4] = 'q';
+			break;
+		case KNIGHT:
+			str[4] = 'n';
+			break;
+		case BISHOP:
+			str[4] = 'b';
+			break;
+		case ROOK:
+			str[4] = 'r';
+			break;
+		}
+	}
+	else {
+		str[4] = '\0';
+	}
+	str[5] = '\0';
+}
+
+static void get_pos_copy(Position* const copy_pos, Position const * const pos)
+{
+	memcpy(copy_pos->bb, pos->bb, sizeof(pos->bb));
+	memcpy(copy_pos->board, pos->board, sizeof(pos->board));
+	copy_pos->state = &copy_pos->hist[pos->state - pos->hist];
+	memcpy(copy_pos->state, pos->state, sizeof(State));
+}
+
 void init_intervening_sqs()
 {
 	int i, j, high, low;
@@ -283,7 +460,6 @@ void init_intervening_sqs()
 		}
 	}
 }
-
 
 void init_atks()
 {
@@ -455,70 +631,6 @@ void do_move(Position* const pos, int const m)
 	}
 }
 
-static inline int get_piece_from_char(char c)
-{
-	switch (c) {
-	case 'p': return BP;
-	case 'r': return BR;
-	case 'n': return BN;
-	case 'b': return BB;
-	case 'q': return BQ;
-	case 'k': return BK;
-	case 'P': return WP;
-	case 'R': return WR;
-	case 'N': return WN;
-	case 'B': return WB;
-	case 'Q': return WQ;
-	case 'K': return WK;
-	default : return -1;
-	}
-}
-
-static inline int get_cr_from_char(char c)
-{
-	switch (c) {
-	case 'K': return WKC;
-	case 'Q': return WQC;
-	case 'k': return BKC;
-	case 'q': return BQC;
-	default : return -1;
-	}
-}
-
-
-static inline char get_char_from_piece(int const piece, int c)
-{
-	char x;
-	int const pt = piece;
-	switch (pt) {
-	case PAWN:
-		x = 'P';
-		break;
-	case KNIGHT:
-		x = 'N';
-		break;
-	case BISHOP:
-		x = 'B';
-		break;
-	case ROOK:
-		x = 'R';
-		break;
-	case QUEEN:
-		x = 'Q';
-		break;
-	case KING:
-		x = 'K';
-		break;
-	default:
-		return -1;
-	}
-
-	if (c == BLACK)
-		x += 32;
-	return x;
-}
-
-
 void init_pos(Position* const pos)
 {
 	int i;
@@ -578,34 +690,6 @@ int set_pos(Position* pos, std::string fen)
 	}
 
 	return index;
-}
-
-static int const is_prom_sq[64] = {
-	1, 1, 1, 1, 1, 1, 1, 1,
-	0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0,
-	1, 1, 1, 1, 1, 1, 1, 1
-};
-
-template<int by_color>
-static inline u64 atkers_to_sq(Position const * const pos, int const sq, u64 const occupancy)
-{
-	return (  ( pos->bb[KNIGHT]                   & n_atks_bb[sq])
-		| ( pos->bb[PAWN]                     & p_atks_bb[!by_color][sq])
-		| ((pos->bb[ROOK]   | pos->bb[QUEEN]) & Rmagic(sq, occupancy))
-		| ((pos->bb[BISHOP] | pos->bb[QUEEN]) & Bmagic(sq, occupancy))
-		| ( pos->bb[KING]                     & k_atks_bb[sq]))
-		& pos->bb[by_color];
-}
-
-static inline void add_move(int const m, int** end)
-{
-	**end = m;
-	++*end;
 }
 
 static void extract_moves(int const from, u64 atks_bb, int** end)
@@ -880,94 +964,6 @@ static void gen_moves(Position* pos, int** end)
 
 template<> void gen_moves<KING+1, WHITE>(Position*, int**) {}
 template<> void gen_moves<KING+1, BLACK>(Position*, int**) {}
-
-template<int to_color>
-static inline u64 get_pinned(Position* const pos)
-{
-	int const ksq = bitscan(pos->bb[KING] & pos->bb[to_color]);
-	int sq;
-	u64 bb;
-	u64 pinned_bb  = 0ULL;
-	u64 pinners_bb = ( (pos->bb[ROOK] | pos->bb[QUEEN])
-			  & pos->bb[!to_color]
-			  & r_pseudo_atks_bb[ksq])
-		    | ( (pos->bb[BISHOP] | pos->bb[QUEEN])
-		       & pos->bb[!to_color]
-		       & b_pseudo_atks_bb[ksq]);
-	while (pinners_bb) {
-		sq          = bitscan(pinners_bb);
-		pinners_bb &= pinners_bb - 1;
-		bb          = intervening_sqs_bb[sq][ksq] & get_full_bb(pos->bb);
-		if(!(bb & (bb - 1)))
-			pinned_bb ^= bb & pos->bb[to_color];
-	}
-	return pinned_bb;
-}
-
-template<int by_color>
-static inline u64 get_checkers(Position const * const pos)
-{
-	const int sq = bitscan(pos->bb[KING] & pos->bb[!by_color]);
-	return (  ( pos->bb[KNIGHT]                   & n_atks_bb[sq])
-		| ( pos->bb[PAWN]                     & p_atks_bb[!by_color][sq])
-		| ((pos->bb[ROOK]   | pos->bb[QUEEN]) & Rmagic(sq, get_full_bb(pos->bb)))
-		| ((pos->bb[BISHOP] | pos->bb[QUEEN]) & Bmagic(sq, get_full_bb(pos->bb)))
-		| ( pos->bb[KING]                     & k_atks_bb[sq]))
-		& pos->bb[by_color];
-}
-
-// Idea from Stockfish 6
-template<int c>
-static inline int legal_move(Position* const pos, int move)
-{
-	int const from = from_sq(move);
-	int const ksq  = bitscan(pos->bb[KING] & pos->bb[c]);
-	if (move_type(move) == ENPASSANT) {
-		u64 const to_bb  = BB(pos->state->ep_sq);
-		u64 const pieces = (get_full_bb(pos->bb) ^ BB(from) ^ pawn_shift<!c>(to_bb)) | to_bb;
-
-		return !(Rmagic(ksq, pieces) & ((pos->bb[QUEEN] | pos->bb[ROOK]) & pos->bb[!c]))
-		    && !(Bmagic(ksq, pieces) & ((pos->bb[QUEEN] | pos->bb[BISHOP]) & pos->bb[!c]));
-	} else if (from == ksq) {
-		return move_type(move) == CASTLE
-		   || !atkers_to_sq<!c>(pos, to_sq(move), get_full_bb(pos->bb));
-	} else {
-		return !(pos->state->pinned_bb & BB(from))
-		     || (BB(to_sq(move)) & dirn_sqs_bb[from][ksq]);
-	}
-}
-
-static inline void move_str(int move, char str[6])
-{
-	int from = from_sq(move),
-	    to   = to_sq(move);
-	str[0]   = file_of(from) + 'a';
-	str[1]   = rank_of(from) + '1';
-	str[2]   = file_of(to)   + 'a';
-	str[3]   = rank_of(to)   + '1';
-	if (move_type(move) == PROMOTION) {
-		const int prom = prom_type(move);
-		switch (prom) {
-		case QUEEN:
-			str[4] = 'q';
-			break;
-		case KNIGHT:
-			str[4] = 'n';
-			break;
-		case BISHOP:
-			str[4] = 'b';
-			break;
-		case ROOK:
-			str[4] = 'r';
-			break;
-		}
-	}
-	else {
-		str[4] = '\0';
-	}
-	str[5] = '\0';
-}
-
 
 void print_board(Position* pos)
 {

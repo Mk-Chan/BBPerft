@@ -906,17 +906,17 @@ static void gen_pawn_moves(Position* pos, int** end)
 	while (caps1_bb) {
 		to = bitscan(caps1_bb);
 		caps1_bb &= caps1_bb - 1;
-		add_move(move_cap(to - caps1_fwd, to, pos->board[to]), end);
+		add_move(move_cap(to - caps1_fwd, to, get_pt(pos, to)), end);
 	}
 	while (caps2_bb) {
 		to = bitscan(caps2_bb);
 		caps2_bb &= caps2_bb - 1;
-		add_move(move_cap(to - caps2_fwd, to, pos->board[to]), end);
+		add_move(move_cap(to - caps2_fwd, to, get_pt(pos, to)), end);
 	}
 	while (prom_caps1_bb) {
 		to = bitscan(prom_caps1_bb);
 		prom_caps1_bb &= prom_caps1_bb - 1;
-		cap_pt = pos->board[to];
+		cap_pt = get_pt(pos, to);
 		add_move(move_prom_cap(to - caps1_fwd, to, TO_QUEEN, cap_pt), end);
 		add_move(move_prom_cap(to - caps1_fwd, to, TO_KNIGHT, cap_pt), end);
 		add_move(move_prom_cap(to - caps1_fwd, to, TO_ROOK, cap_pt), end);
@@ -925,7 +925,7 @@ static void gen_pawn_moves(Position* pos, int** end)
 	while (prom_caps2_bb) {
 		to = bitscan(prom_caps2_bb);
 		prom_caps2_bb &= prom_caps2_bb - 1;
-		cap_pt = pos->board[to];
+		cap_pt = get_pt(pos, to);
 		add_move(move_prom_cap(to - caps2_fwd, to, TO_QUEEN, cap_pt), end);
 		add_move(move_prom_cap(to - caps2_fwd, to, TO_KNIGHT, cap_pt), end);
 		add_move(move_prom_cap(to - caps2_fwd, to, TO_ROOK, cap_pt), end);

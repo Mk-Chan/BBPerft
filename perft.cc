@@ -954,12 +954,11 @@ u64 enpassants = 0ULL;
 u64 castles    = 0ULL;
 u64 promotions = 0ULL;
 
-Movelist mlist[218][MAX_PLY];
-std::thread threads[218];
 int num_threads = 1;
+int min_split_ply = 1;
 
 template<int c, bool count_extras, bool split, bool root = true>
-u64 perft(Position* pos, Movelist* list, int depth)
+u64 perft(Position* pos, Movelist* list, int depth, int ply = 0)
 {
 	list->end = list->moves;
 	pos->state.pinned_bb = get_pinned<c>(pos);
@@ -994,21 +993,23 @@ u64 perft(Position* pos, Movelist* list, int depth)
 				}
 			}
 		}
-	} else if (root) {
+	} else if (root || ply <= min_split_ply) {
 		int len = list->end - list->moves;
-		std::atomic<u64> root_leaves = 0ULL;
+		std::atomic<u64> root_leaves(0);
+		std::thread threads[num_threads];
 		for (int i = 0; i < len;) {
 			int j;
 			int jlen = std::min(num_threads, len - i);
 			for (j = 0; j < jlen; ++j) {
-				threads[j] = std::thread([i, j, &list, &pos, &depth, &root_leaves] () {
+				threads[j] = std::thread([i, j, ply, depth, &list, &pos, &root_leaves] () {
 					int move = list->moves[i+j];
 					u64 tmp;
 					Position p;
+					Movelist mlist[depth - 1];
 					get_pos_copy(&p, pos);
 					if (legal_move<c>(&p, move)) {
 						do_move<c>(&p, move);
-						tmp = perft<!c, count_extras, split, false>(&p, mlist[j] + 1, depth - 1);
+						tmp = perft<!c, count_extras, split, false>(&p, mlist, depth - 1, ply + 1);
 						root_leaves += tmp;
 						if (split) {
 							char mstr[6];
@@ -1032,7 +1033,7 @@ u64 perft(Position* pos, Movelist* list, int depth)
 			get_pos_copy(&p, pos);
 			if (legal_move<c>(&p, move)) {
 				do_move<c>(&p, move);
-				tmp = perft<!c, count_extras, split, false>(&p, list + 1, depth - 1);
+				tmp = perft<!c, count_extras, split, false>(&p, list + 1, depth - 1, ply + 1);
 				leaves += tmp;
 				if (split) {
 					char mstr[6];
@@ -1061,7 +1062,7 @@ int main(int argc, char** argv)
 	int repeat = 1;
 	int c;
 
-	while ((c = getopt(argc, argv, "sed:f:r:t:")) != -1) {
+	while ((c = getopt(argc, argv, "sed:f:r:t:p:")) != -1) {
 		switch (c) {
 		case 's':
 			split = true;
@@ -1088,6 +1089,9 @@ int main(int argc, char** argv)
 			break;
 		case 't':
 			num_threads = std::atoi(optarg);
+			break;
+		case 'p':
+			min_split_ply = std::atoi(optarg);
 			break;
 		case '?':
 			std::cout << "Unknown option: " << optopt << "\n";

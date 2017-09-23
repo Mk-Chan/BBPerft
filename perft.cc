@@ -50,13 +50,13 @@
 #define popcnt(bb)  (__builtin_popcountll(bb))
 #define bitscan(bb) (__builtin_ctzll(bb))
 
-#define move_ep(from, to)                  (from | (to << 6) | ENPASSANT)
-#define move_cap(from, to, cap)            (from | (to << 6) | CAPTURE | (cap << CAP_TYPE_SHIFT))
-#define move_prom(from, to, prom)          (from | (to << 6) | PROMOTION | prom)
-#define move_normal(from, to)              (from | (to << 6) | NORMAL)
-#define move_castle(from, to)              (from | (to << 6) | CASTLE)
-#define move_double_push(from, to)         (from | (to << 6) | DOUBLE_PUSH)
-#define move_prom_cap(from, to, prom, cap) (from | (to << 6) | PROM_CAPTURE | prom | (cap << CAP_TYPE_SHIFT))
+#define move_ep(from, to)                  ((from) | (to << 6) | ENPASSANT)
+#define move_cap(from, to, cap)            ((from) | (to << 6) | CAPTURE | (cap << CAP_TYPE_SHIFT))
+#define move_prom(from, to, prom)          ((from) | (to << 6) | PROMOTION | prom)
+#define move_normal(from, to)              ((from) | (to << 6) | NORMAL)
+#define move_castle(from, to)              ((from) | (to << 6) | CASTLE)
+#define move_double_push(from, to)         ((from) | (to << 6) | DOUBLE_PUSH)
+#define move_prom_cap(from, to, prom, cap) ((from) | (to << 6) | PROM_CAPTURE | prom | (cap << CAP_TYPE_SHIFT))
 
 typedef unsigned long long u64;
 
@@ -164,6 +164,17 @@ static u64 rank_mask[8] = {
 	0xff00000000000000ULL
 };
 
+static u64 file_mask[8] = {
+	0x0101010101010101ULL,
+	0x0202020202020202ULL,
+	0x0404040404040404ULL,
+	0x0808080808080808ULL,
+	0x1010101010101010ULL,
+	0x2020202020202020ULL,
+	0x4040404040404040ULL,
+	0x8080808080808080ULL
+};
+
 struct Movelist {
 	int  moves[218];
 	int* end;
@@ -182,6 +193,14 @@ struct Position {
 	State* state;
 	State  hist[MAX_PLY];
 };
+
+static inline void get_pos_copy(Position* const copy_pos, Position const * const pos)
+{
+	memcpy(copy_pos->bb, pos->bb, sizeof(pos->bb));
+	memcpy(copy_pos->board, pos->board, sizeof(pos->board));
+	copy_pos->state = &copy_pos->hist[pos->state - pos->hist];
+	memcpy(copy_pos->state, pos->state, sizeof(State));
+}
 
 static inline int get_pt(Position const * const pos, int const sq)
 {
@@ -413,14 +432,6 @@ static inline void move_str(int move, char str[6])
 		str[4] = '\0';
 	}
 	str[5] = '\0';
-}
-
-static void get_pos_copy(Position* const copy_pos, Position const * const pos)
-{
-	memcpy(copy_pos->bb, pos->bb, sizeof(pos->bb));
-	memcpy(copy_pos->board, pos->board, sizeof(pos->board));
-	copy_pos->state = &copy_pos->hist[pos->state - pos->hist];
-	memcpy(copy_pos->state, pos->state, sizeof(State));
 }
 
 void init_intervening_sqs()
@@ -826,76 +837,99 @@ static void gen_check_evasions(Position* pos, int** end)
 template<int c>
 static void gen_pawn_moves(Position* pos, int** end)
 {
-	int to, cap_pt, fr;
-	u64 single_push, from, cap_candidates, double_push;
-	u64 const vacancy_mask        = ~get_full_bb(pos->bb);
-	u64       pawns_bb            = pos->bb[PAWN] & pos->bb[c];
-	u64 prom_candidates_bb        = pawns_bb & rank_mask[(c == WHITE ? RANK_7 : RANK_2)];
-	u64 double_push_candidates_bb = pawns_bb & rank_mask[(c == WHITE ? RANK_2 : RANK_7)];
-	pawns_bb                     ^= prom_candidates_bb ^ double_push_candidates_bb;
+	int from, to, forward, cap_pt, caps1_fwd, caps2_fwd;
+	u64 single_pushes_bb, double_pushes_bb, prom_candidates_bb,
+	    caps1_bb, caps2_bb, prom_caps1_bb, prom_caps2_bb;
+
+	u64 const vacancy_mask = ~pos->bb[FULL];
+	u64 pawns_bb = pos->bb[PAWN] & pos->bb[c];
 	if (pos->state->ep_sq != -1) {
 		int const ep_sq   = pos->state->ep_sq;
 		u64       ep_poss = pawns_bb & p_atks_bb[!c][ep_sq];
 		while (ep_poss) {
-			add_move(move_ep(bitscan(ep_poss), ep_sq), end);
+			from     = bitscan(ep_poss);
 			ep_poss &= ep_poss - 1;
+			add_move(move_ep(from, ep_sq), end);
 		}
+	}
+	if (c == WHITE) {
+		single_pushes_bb   = ((pawns_bb & ~rank_mask[RANK_7]) << 8) & vacancy_mask;
+		double_pushes_bb   = ((single_pushes_bb & rank_mask[RANK_3]) << 8) & vacancy_mask;
+		prom_candidates_bb = ((pawns_bb & rank_mask[RANK_7]) << 8) & vacancy_mask;
+
+		caps1_bb      = ((pawns_bb & ~file_mask[FILE_A]) << 7) & pos->bb[BLACK];
+		prom_caps1_bb = caps1_bb & rank_mask[RANK_8];
+		caps1_bb     ^= prom_caps1_bb;
+
+		caps2_bb      = ((pawns_bb & ~file_mask[FILE_H]) << 9) & pos->bb[BLACK];
+		prom_caps2_bb = caps2_bb & rank_mask[RANK_8];
+		caps2_bb     ^= prom_caps2_bb;
+
+		caps1_fwd = 7;
+		caps2_fwd = 9;
+		forward   = 8;
+	} else {
+		single_pushes_bb   = ((pawns_bb & ~rank_mask[RANK_2]) >> 8) & vacancy_mask;
+		double_pushes_bb   = ((single_pushes_bb & rank_mask[RANK_6]) >> 8) & vacancy_mask;
+		prom_candidates_bb = ((pawns_bb & rank_mask[RANK_2]) >> 8) & vacancy_mask;
+
+		caps1_bb      = ((pawns_bb & ~file_mask[FILE_H]) >> 7) & pos->bb[WHITE];
+		prom_caps1_bb = caps1_bb & rank_mask[RANK_1];
+		caps1_bb     ^= prom_caps1_bb;
+
+		caps2_bb      = ((pawns_bb & ~file_mask[FILE_A]) >> 9) & pos->bb[WHITE];
+		prom_caps2_bb = caps2_bb & rank_mask[RANK_1];
+		caps2_bb     ^= prom_caps2_bb;
+
+		caps1_fwd = -7;
+		caps2_fwd = -9;
+		forward   = -8;
+	}
+	while (single_pushes_bb) {
+		to = bitscan(single_pushes_bb);
+		single_pushes_bb &= single_pushes_bb - 1;
+		add_move(move_normal(to - forward, to), end);
+	}
+	while (double_pushes_bb) {
+		to = bitscan(double_pushes_bb);
+		double_pushes_bb &= double_pushes_bb - 1;
+		add_move(move_double_push(to - forward*2, to), end);
 	}
 	while (prom_candidates_bb) {
-		fr                  = bitscan(prom_candidates_bb);
+		to = bitscan(prom_candidates_bb);
 		prom_candidates_bb &= prom_candidates_bb - 1;
-		single_push         = pawn_shift<c>(BB(fr));
-		cap_candidates      = p_atks_bb[c][fr] & pos->bb[!c];
-		if (single_push & vacancy_mask) {
-			to = bitscan(single_push);
-			add_move(move_prom(fr, to, TO_QUEEN), end);
-			add_move(move_prom(fr, to, TO_KNIGHT), end);
-			add_move(move_prom(fr, to, TO_ROOK), end);
-			add_move(move_prom(fr, to, TO_BISHOP), end);
-		}
-		while (cap_candidates) {
-			to              = bitscan(cap_candidates);
-			cap_candidates &= cap_candidates - 1;
-			cap_pt          = get_pt(pos, to);
-			add_move(move_prom_cap(fr, to, TO_QUEEN, cap_pt), end);
-			add_move(move_prom_cap(fr, to, TO_KNIGHT, cap_pt), end);
-			add_move(move_prom_cap(fr, to, TO_ROOK, cap_pt), end);
-			add_move(move_prom_cap(fr, to, TO_BISHOP, cap_pt), end);
-		}
+		add_move(move_prom(to - forward, to, TO_QUEEN), end);
+		add_move(move_prom(to - forward, to, TO_KNIGHT), end);
+		add_move(move_prom(to - forward, to, TO_ROOK), end);
+		add_move(move_prom(to - forward, to, TO_BISHOP), end);
 	}
-	while (double_push_candidates_bb) {
-		from                       = double_push_candidates_bb & -double_push_candidates_bb;
-		fr                         = bitscan(from);
-		double_push_candidates_bb &= double_push_candidates_bb - 1;
-		single_push                = pawn_shift<c>(from);
-		cap_candidates             = p_atks_bb[c][fr] & pos->bb[!c];
-		if (single_push & vacancy_mask) {
-			add_move(move_normal(fr, bitscan(single_push)), end);
-			double_push = pawn_shift<c>(single_push);
-			if (double_push & vacancy_mask)
-				add_move(move_double_push(fr, bitscan(double_push)), end);
-		}
-		while (cap_candidates) {
-			to              = bitscan(cap_candidates);
-			cap_pt          = get_pt(pos, to);
-			cap_candidates &= cap_candidates - 1;
-			add_move(move_cap(fr, to, cap_pt), end);
-		}
+	while (caps1_bb) {
+		to = bitscan(caps1_bb);
+		caps1_bb &= caps1_bb - 1;
+		add_move(move_cap(to - caps1_fwd, to, pos->board[to]), end);
 	}
-	while (pawns_bb) {
-		from        = pawns_bb & -pawns_bb;
-		fr          = bitscan(from);
-		pawns_bb   &= pawns_bb - 1;
-		single_push = pawn_shift<c>(from);
-		cap_candidates = p_atks_bb[c][fr] & pos->bb[!c];
-		if (single_push & vacancy_mask)
-			add_move(move_normal(fr, bitscan(single_push)), end);
-		while (cap_candidates) {
-			to              = bitscan(cap_candidates);
-			cap_pt          = get_pt(pos, to);
-			cap_candidates &= cap_candidates - 1;
-			add_move(move_cap(fr, to, cap_pt), end);
-		}
+	while (caps2_bb) {
+		to = bitscan(caps2_bb);
+		caps2_bb &= caps2_bb - 1;
+		add_move(move_cap(to - caps2_fwd, to, pos->board[to]), end);
+	}
+	while (prom_caps1_bb) {
+		to = bitscan(prom_caps1_bb);
+		prom_caps1_bb &= prom_caps1_bb - 1;
+		cap_pt = pos->board[to];
+		add_move(move_prom_cap(to - caps1_fwd, to, TO_QUEEN, cap_pt), end);
+		add_move(move_prom_cap(to - caps1_fwd, to, TO_KNIGHT, cap_pt), end);
+		add_move(move_prom_cap(to - caps1_fwd, to, TO_ROOK, cap_pt), end);
+		add_move(move_prom_cap(to - caps1_fwd, to, TO_BISHOP, cap_pt), end);
+	}
+	while (prom_caps2_bb) {
+		to = bitscan(prom_caps2_bb);
+		prom_caps2_bb &= prom_caps2_bb - 1;
+		cap_pt = pos->board[to];
+		add_move(move_prom_cap(to - caps2_fwd, to, TO_QUEEN, cap_pt), end);
+		add_move(move_prom_cap(to - caps2_fwd, to, TO_KNIGHT, cap_pt), end);
+		add_move(move_prom_cap(to - caps2_fwd, to, TO_ROOK, cap_pt), end);
+		add_move(move_prom_cap(to - caps2_fwd, to, TO_BISHOP, cap_pt), end);
 	}
 }
 

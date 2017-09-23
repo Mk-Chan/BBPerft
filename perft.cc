@@ -36,7 +36,7 @@
 #define PROM_TYPE_MASK (7 << PROM_TYPE_SHIFT)
 #define CAP_TYPE_MASK  (7 << CAP_TYPE_SHIFT)
 
-#define get_full_bb(bb) ((bb[FULL]))
+#define get_full_bb(bb) ((bb[WHITE] ^ bb[BLACK]))
 
 #define rank_of(sq) (sq >> 3)
 #define file_of(sq) (sq & 7)
@@ -72,7 +72,6 @@ enum PieceTypes {
 	ROOK,
 	QUEEN,
 	KING,
-	FULL,
 	NUM_PIECE_TYPES
 };
 
@@ -188,54 +187,47 @@ struct State {
 };
 
 struct Position {
-	u64    bb[12];
-	int    board[64];
-	State* state;
-	State  hist[MAX_PLY];
+	State state;
+	u64    bb[8];
 };
 
 static inline void get_pos_copy(Position* const copy_pos, Position const * const pos)
 {
 	memcpy(copy_pos->bb, pos->bb, sizeof(pos->bb));
-	memcpy(copy_pos->board, pos->board, sizeof(pos->board));
-	copy_pos->state = &copy_pos->hist[pos->state - pos->hist];
-	memcpy(copy_pos->state, pos->state, sizeof(State));
+	copy_pos->state = pos->state;
 }
 
 static inline int get_pt(Position const * const pos, int const sq)
 {
-	return pos->board[sq];
+	u64 sq_bb = BB(sq);
+	for (int pt = PAWN; pt <= KING; ++pt)
+		if (pos->bb[pt] & sq_bb)
+			return pt;
+	return 0;
 }
 
 template<int c>
 static inline void move_piece(Position* const pos, int const from, int const to, int const pt)
 {
 	u64 from_to       = BB(from) ^ BB(to);
-	pos->bb[FULL]    ^= from_to;
 	pos->bb[c]       ^= from_to;
 	pos->bb[pt]      ^= from_to;
-	pos->board[to]    = pt;
-	pos->board[from]  = 0;
 }
 
 template<int c>
 static inline void put_piece(Position* const pos, int const sq, int const pt)
 {
 	u64 set         = BB(sq);
-	pos->bb[FULL]  ^= set;
 	pos->bb[c]     ^= set;
 	pos->bb[pt]    ^= set;
-	pos->board[sq]  = pt;
 }
 
 template<int c>
 static inline void remove_piece(Position* const pos, int const sq, int const pt)
 {
 	u64 clr         = BB(sq);
-	pos->bb[FULL]  ^= clr;
 	pos->bb[c]     ^= clr;
 	pos->bb[pt]    ^= clr;
-	pos->board[sq]  = 0;
 }
 
 template<int pt>
@@ -389,7 +381,7 @@ static inline int legal_move(Position* const pos, int move)
 	int const from = from_sq(move);
 	int const ksq  = bitscan(pos->bb[KING] & pos->bb[c]);
 	if (move_type(move) == ENPASSANT) {
-		u64 const to_bb  = BB(pos->state->ep_sq);
+		u64 const to_bb  = BB(pos->state.ep_sq);
 		u64 const pieces = (get_full_bb(pos->bb) ^ BB(from) ^ pawn_shift<!c>(to_bb)) | to_bb;
 
 		return !(Rmagic(ksq, pieces) & ((pos->bb[QUEEN] | pos->bb[ROOK]) & pos->bb[!c]))
@@ -398,7 +390,7 @@ static inline int legal_move(Position* const pos, int move)
 		return move_type(move) == CASTLE
 		   || !atkers_to_sq<!c>(pos, to_sq(move), get_full_bb(pos->bb));
 	} else {
-		return !(pos->state->pinned_bb & BB(from))
+		return !(pos->state.pinned_bb & BB(from))
 		     || (BB(to_sq(move)) & dirn_sqs_bb[from][ksq]);
 	}
 }
@@ -517,61 +509,6 @@ void init_atks()
 }
 
 template<int c>
-void undo_move(Position* const pos, int const m)
-{
-	--pos->state;
-
-	int const from = from_sq(m),
-	          to   = to_sq(m),
-	          mt   = move_type(m);
-
-	switch (mt) {
-	case NORMAL:
-		move_piece<c>(pos, to, from, get_pt(pos, to));
-		break;
-	case CAPTURE:
-		move_piece<c>(pos, to, from, get_pt(pos, to));
-		put_piece<!c>(pos, to, cap_type(m));
-		break;
-	case DOUBLE_PUSH:
-		move_piece<c>(pos, to, from, PAWN);
-		break;
-	case ENPASSANT:
-		put_piece<!c>(pos, (c == WHITE ? to - 8 : to + 8), PAWN);
-		move_piece<c>(pos, to, from, PAWN);
-		break;
-	case CASTLE:
-		move_piece<c>(pos, to, from, KING);
-		switch(to) {
-		case C1:
-			move_piece<c>(pos, D1, A1, ROOK);
-			break;
-		case G1:
-			move_piece<c>(pos, F1, H1, ROOK);
-			break;
-		case C8:
-			move_piece<c>(pos, D8, A8, ROOK);
-			break;
-		case G8:
-			move_piece<c>(pos, F8, H8, ROOK);
-			break;
-		default:
-			break;
-		}
-		break;
-	case PROM_CAPTURE:
-		remove_piece<c>(pos, to, prom_type(m));
-		put_piece<c>(pos, from, PAWN);
-		put_piece<!c>(pos, to, cap_type(m));
-		break;
-	default:
-		remove_piece<c>(pos, to, prom_type(m));
-		put_piece<c>(pos, from, PAWN);
-		break;
-	}
-}
-
-template<int c>
 void do_move(Position* const pos, int const m)
 {
 	static int const castle_perms[64] = {
@@ -585,16 +522,15 @@ void do_move(Position* const pos, int const m)
 		 7, 15, 15, 15, 3,  15, 15, 11
 	};
 
-	State* const curr = pos->state;
-	State* const next = ++pos->state;
+	State* state = &pos->state;
 
-	next->ep_sq    = -1;
+	state->ep_sq    = -1;
 
 	int const from = from_sq(m),
 	          to   = to_sq(m),
 	          mt   = move_type(m);
 
-	next->castling_rights = curr->castling_rights & castle_perms[from] & castle_perms[to];
+	state->castling_rights = state->castling_rights & castle_perms[from] & castle_perms[to];
 
 	switch (mt) {
 	case NORMAL:
@@ -606,7 +542,7 @@ void do_move(Position* const pos, int const m)
 		break;
 	case DOUBLE_PUSH:
 		move_piece<c>(pos, from, to, PAWN);
-		next->ep_sq = (c == WHITE ? from + 8 : from - 8);
+		state->ep_sq = (c == WHITE ? from + 8 : from - 8);
 		break;
 	case ENPASSANT:
 		move_piece<c>(pos, from, to, PAWN);
@@ -646,15 +582,12 @@ void do_move(Position* const pos, int const m)
 void init_pos(Position* const pos)
 {
 	int i;
-	for (i = 0; i != 64; ++i)
-		pos->board[i] = 0;
 	for (i = 0; i != NUM_PIECE_TYPES; ++i)
 		pos->bb[i] = 0ULL;
-	pos->state                  = pos->hist;
-	pos->state->pinned_bb       = 0ULL;
-	pos->state->castling_rights = 0;
-	pos->state->ep_sq           = -1;
-	pos->state->checkers_bb     = 0ULL;
+	pos->state.pinned_bb       = 0ULL;
+	pos->state.castling_rights = 0;
+	pos->state.ep_sq           = -1;
+	pos->state.checkers_bb     = 0ULL;
 }
 
 int set_pos(Position* pos, std::string fen)
@@ -692,13 +625,13 @@ int set_pos(Position* pos, std::string fen)
 			++index;
 			break;
 		} else {
-			pos->state->castling_rights |= get_cr_from_char(c);
+			pos->state.castling_rights |= get_cr_from_char(c);
 		}
 	}
 	int ep_sq = -1;
 	if ((c = fen[index++]) != '-') {
 		ep_sq = (c - 'a') + ((fen[index++] - '1') << 3);
-		pos->state->ep_sq = ep_sq;
+		pos->state.ep_sq = ep_sq;
 	}
 
 	return index;
@@ -728,7 +661,7 @@ static void gen_check_blocks(Position* const pos, u64 blocking_poss_bb, int** en
 	u64 blockers_poss_bb, pawn_block_poss_bb;
 	int blocking_sq, blocker;
 	u64       pawns_bb       = pos->bb[PAWN] & pos->bb[c];
-	u64 const inlcusion_mask = ~(pawns_bb | pos->bb[KING] | pos->state->pinned_bb),
+	u64 const inlcusion_mask = ~(pawns_bb | pos->bb[KING] | pos->state.pinned_bb),
 	          full_bb        = get_full_bb(pos->bb),
 	          vacancy_mask   = ~full_bb;
 	while (blocking_poss_bb) {
@@ -767,7 +700,7 @@ static void gen_checker_caps(Position* pos, u64 checkers_bb, int** end)
 	u64 const pawns_bb      = pos->bb[PAWN] & pos->bb[c],
 	          non_king_mask = ~pos->bb[KING],
 		  full_bb       = get_full_bb(pos->bb);
-	int const ep_sq         = pos->state->ep_sq;
+	int const ep_sq         = pos->state.ep_sq;
 	if (    ep_sq != -1
 	    && (pawn_shift<!c>(BB(ep_sq)) & checkers_bb)) {
 		u64 ep_poss = pawns_bb & p_atks_bb[!c][ep_sq];
@@ -803,7 +736,7 @@ static void gen_check_evasions(Position* pos, int** end)
 {
 	int const ksq = bitscan(pos->bb[KING] & pos->bb[c]);
 
-	u64 checkers_bb = pos->state->checkers_bb,
+	u64 checkers_bb = pos->state.checkers_bb,
 	    evasions_bb = k_atks_bb[ksq] & ~pos->bb[c];
 
 	u64 const full_bb      = get_full_bb(pos->bb);
@@ -841,10 +774,10 @@ static void gen_pawn_moves(Position* pos, int** end)
 	u64 single_pushes_bb, double_pushes_bb, prom_candidates_bb,
 	    caps1_bb, caps2_bb, prom_caps1_bb, prom_caps2_bb;
 
-	u64 const vacancy_mask = ~pos->bb[FULL];
+	u64 const vacancy_mask = ~get_full_bb(pos->bb);
 	u64 pawns_bb = pos->bb[PAWN] & pos->bb[c];
-	if (pos->state->ep_sq != -1) {
-		int const ep_sq   = pos->state->ep_sq;
+	if (pos->state.ep_sq != -1) {
+		int const ep_sq   = pos->state.ep_sq;
 		u64       ep_poss = pawns_bb & p_atks_bb[!c][ep_sq];
 		while (ep_poss) {
 			from     = bitscan(ep_poss);
@@ -955,13 +888,13 @@ static inline void gen_castling(Position* pos, int** end)
 
 	u64 const full_bb = get_full_bb(pos->bb);
 
-	if (    (castling_poss[c][0] & pos->state->castling_rights)
+	if (    (castling_poss[c][0] & pos->state.castling_rights)
 	    && !(castle_mask[c][0] & full_bb)
 	    && !(atkers_to_sq<!c>(pos, castling_intermediate_sqs[c][0][0], full_bb))
 	    && !(atkers_to_sq<!c>(pos, castling_intermediate_sqs[c][0][1], full_bb)))
 		add_move(move_castle(castling_king_sqs[c][0][0], castling_king_sqs[c][0][1]), end);
 
-	if (    (castling_poss[c][1] & pos->state->castling_rights)
+	if (    (castling_poss[c][1] & pos->state.castling_rights)
 	    && !(castle_mask[c][1] & full_bb)
 	    && !(atkers_to_sq<!c>(pos, castling_intermediate_sqs[c][1][0], full_bb))
 	    && !(atkers_to_sq<!c>(pos, castling_intermediate_sqs[c][1][1], full_bb)))
@@ -986,7 +919,7 @@ static void gen_moves(Position* pos, int** end)
 			  vacancy_mask = ~full_bb;
 		u64 curr_piece_bb      = pos->bb[pt] & pos->bb[c];
 		if (pt == KNIGHT)
-			curr_piece_bb &= ~pos->state->pinned_bb;
+			curr_piece_bb &= ~pos->state.pinned_bb;
 		while (curr_piece_bb) {
 			from           = bitscan(curr_piece_bb);
 			curr_piece_bb &= curr_piece_bb - 1;
@@ -1024,9 +957,9 @@ template<int c, bool count_extras, bool split, bool root = true>
 u64 perft(Position* pos, Movelist* list, int depth)
 {
 	list->end = list->moves;
-	pos->state->pinned_bb = get_pinned<c>(pos);
-	pos->state->checkers_bb = get_checkers<!c>(pos);
-	if (pos->state->checkers_bb)
+	pos->state.pinned_bb = get_pinned<c>(pos);
+	pos->state.checkers_bb = get_checkers<!c>(pos);
+	if (pos->state.checkers_bb)
 		gen_check_evasions<c>(pos, &list->end);
 	else
 		gen_moves<PAWN, c>(pos, &list->end);
@@ -1057,7 +990,7 @@ u64 perft(Position* pos, Movelist* list, int depth)
 				}
 			}
 		}
-	} else if (root) {
+	} else {
 		u64 tmp;
 		Position p;
 		for (move = list->moves; move < list->end; ++move) {
@@ -1071,14 +1004,6 @@ u64 perft(Position* pos, Movelist* list, int depth)
 					move_str(*move, mstr);
 					printf("%s: %'llu\n", mstr, tmp);
 				}
-			}
-		}
-	} else {
-		for (move = list->moves; move < list->end; ++move) {
-			if (legal_move<c>(pos, *move)) {
-				do_move<c>(pos, *move);
-				leaves += perft<!c, count_extras, split, false>(pos, list + 1, depth - 1);
-				undo_move<c>(pos, *move);
 			}
 		}
 	}

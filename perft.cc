@@ -188,7 +188,7 @@ struct State {
 
 struct Position {
 	State state;
-	u64    bb[8];
+	u64 bb[8];
 };
 
 static inline void get_pos_copy(Position* const copy_pos, Position const * const pos)
@@ -209,25 +209,25 @@ static inline int get_pt(Position const * const pos, int const sq)
 template<int c>
 static inline void move_piece(Position* const pos, int const from, int const to, int const pt)
 {
-	u64 from_to       = BB(from) ^ BB(to);
-	pos->bb[c]       ^= from_to;
-	pos->bb[pt]      ^= from_to;
+	u64 from_to  = BB(from) ^ BB(to);
+	pos->bb[c]  ^= from_to;
+	pos->bb[pt] ^= from_to;
 }
 
 template<int c>
 static inline void put_piece(Position* const pos, int const sq, int const pt)
 {
-	u64 set         = BB(sq);
-	pos->bb[c]     ^= set;
-	pos->bb[pt]    ^= set;
+	u64 set      = BB(sq);
+	pos->bb[c]  ^= set;
+	pos->bb[pt] ^= set;
 }
 
 template<int c>
 static inline void remove_piece(Position* const pos, int const sq, int const pt)
 {
-	u64 clr         = BB(sq);
-	pos->bb[c]     ^= clr;
-	pos->bb[pt]    ^= clr;
+	u64 clr      = BB(sq);
+	pos->bb[c]  ^= clr;
+	pos->bb[pt] ^= clr;
 }
 
 template<int pt>
@@ -523,8 +523,7 @@ void do_move(Position* const pos, int const m)
 	};
 
 	State* state = &pos->state;
-
-	state->ep_sq    = -1;
+	state->ep_sq = -1;
 
 	int const from = from_sq(m),
 	          to   = to_sq(m),

@@ -21,6 +21,8 @@
 #include <chrono>
 #include <string.h>
 #include <unistd.h>
+#include <thread>
+#include <atomic>
 #include "magicmoves.hpp"
 
 #define INITIAL_POSITION (("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"))
@@ -952,6 +954,10 @@ u64 enpassants = 0ULL;
 u64 castles    = 0ULL;
 u64 promotions = 0ULL;
 
+Movelist mlist[218][MAX_PLY];
+std::thread threads[218];
+int num_threads = 1;
+
 template<int c, bool count_extras, bool split, bool root = true>
 u64 perft(Position* pos, Movelist* list, int depth)
 {
@@ -963,10 +969,9 @@ u64 perft(Position* pos, Movelist* list, int depth)
 	else
 		gen_moves<PAWN, c>(pos, &list->end);
 
-	int* move;
 	u64 leaves = 0ULL;
 	if (depth == 1) {
-		for (move = list->moves; move < list->end; ++move) {
+		for (int* move = list->moves; move < list->end; ++move) {
 			if (!legal_move<c>(pos, *move)) continue;
 			//do_move<c>(pos, *move);
 			//undo_move<c>(pos, *move);
@@ -989,18 +994,49 @@ u64 perft(Position* pos, Movelist* list, int depth)
 				}
 			}
 		}
+	} else if (root) {
+		int len = list->end - list->moves;
+		std::atomic<u64> root_leaves = 0ULL;
+		for (int i = 0; i < len;) {
+			int j;
+			int jlen = std::min(num_threads, len - i);
+			for (j = 0; j < jlen; ++j) {
+				threads[j] = std::thread([i, j, &list, &pos, &depth, &root_leaves] () {
+					int move = list->moves[i+j];
+					u64 tmp;
+					Position p;
+					get_pos_copy(&p, pos);
+					if (legal_move<c>(&p, move)) {
+						do_move<c>(&p, move);
+						tmp = perft<!c, count_extras, split, false>(&p, mlist[j] + 1, depth - 1);
+						root_leaves += tmp;
+						if (split) {
+							char mstr[6];
+							move_str(move, mstr);
+							printf("%s: %'llu\n", mstr, tmp);
+						}
+					}
+				});
+			}
+			i += j;
+			for (j = 0; j < jlen; ++j)
+				threads[j].join();
+		}
+		leaves += root_leaves;
 	} else {
-		u64 tmp;
-		Position p;
-		for (move = list->moves; move < list->end; ++move) {
+		int len = list->end - list->moves;
+		for (int i = 0; i < len; ++i) {
+			int move = list->moves[i];
+			u64 tmp;
+			Position p;
 			get_pos_copy(&p, pos);
-			if (legal_move<c>(&p, *move)) {
-				do_move<c>(&p, *move);
+			if (legal_move<c>(&p, move)) {
+				do_move<c>(&p, move);
 				tmp = perft<!c, count_extras, split, false>(&p, list + 1, depth - 1);
 				leaves += tmp;
 				if (split) {
 					char mstr[6];
-					move_str(*move, mstr);
+					move_str(move, mstr);
 					printf("%s: %'llu\n", mstr, tmp);
 				}
 			}
@@ -1025,7 +1061,7 @@ int main(int argc, char** argv)
 	int repeat = 1;
 	int c;
 
-	while ((c = getopt(argc, argv, "sed:f:r:")) != -1) {
+	while ((c = getopt(argc, argv, "sed:f:r:t:")) != -1) {
 		switch (c) {
 		case 's':
 			split = true;
@@ -1049,6 +1085,9 @@ int main(int argc, char** argv)
 			break;
 		case 'r':
 			repeat = std::atoi(optarg);
+			break;
+		case 't':
+			num_threads = std::atoi(optarg);
 			break;
 		case '?':
 			std::cout << "Unknown option: " << optopt << "\n";

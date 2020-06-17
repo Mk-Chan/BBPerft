@@ -1034,11 +1034,13 @@ u64 perft(Position* pos, Movelist* list, int depth)
 	int* move;
 	u64 leaves = 0ULL;
 	if (depth == 1) {
+		int illegal_moves = 0;
 		for (move = list->moves; move < list->end; ++move) {
-			if (!legal_move<c>(pos, *move)) continue;
+			if (!legal_move<c>(pos, *move)) {
+				++illegal_moves;
+			}
 			//do_move<c>(pos, *move);
 			//undo_move<c>(pos, *move);
-			++leaves;
 			if (count_extras) {
 				captures += !!cap_type(*move);
 				switch (move_type(*move)) {
@@ -1057,6 +1059,7 @@ u64 perft(Position* pos, Movelist* list, int depth)
 				}
 			}
 		}
+		leaves += move - list->moves - illegal_moves;
 	} else if (root) {
 		u64 tmp;
 		Position p;
